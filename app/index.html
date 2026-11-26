@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#14171c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>人体 3D 肌肉与身体观察系统</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:,">
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.js","three/addons/":"./vendor/three/addons/"}}</script>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <header class="brand"><b>身体观察</b><span>3D 解剖 · 肌肉确认 · 不适记录</span></header>
+    <nav class="tabs" id="tabs">
+      <button data-tab="layers" class="on">图层</button>
+      <button data-tab="focus">重点肌肉</button>
+      <button data-tab="search">搜索</button>
+      <button data-tab="logs">记录</button>
+    </nav>
+    <section class="pane on" id="pane-layers">
+      <div id="layerList"></div>
+      <div class="group">
+        <label class="chk"><input type="checkbox" id="optFascia"> 显示筋膜（包在肌肉外的膜）</label>
+        <label class="chk"><input type="checkbox" id="optSides" checked> 显示左右两侧</label>
+        <label class="chk"><input type="checkbox" id="optHeat"> 按近 30 天不适程度着色</label>
+        <label class="chk"><input type="checkbox" id="optLabels" checked> 鼠标悬停显示名称</label>
+      </div>
+      <p class="hint">点击模型上的结构查看名称；拖动旋转，滚轮/双指缩放，右键/双指拖动平移。</p>
+    </section>
+    <section class="pane" id="pane-focus">
+      <p class="hint">头颈与躯干重点肌肉。点击查看确认动作并在模型中高亮。</p>
+      <div id="focusList"></div>
+      <details class="redflags"><summary>⚠ 需要就医的信号</summary><ul id="redFlags"></ul></details>
+    </section>
+    <section class="pane" id="pane-search">
+      <input id="q" type="search" placeholder="输入中文或英文，如：斜方肌 / trapezius / rib" autocomplete="off">
+      <div id="results"></div>
+    </section>
+    <section class="pane" id="pane-logs">
+      <div class="row"><button id="newLog" class="primary">＋ 新建记录</button><select id="logFilter"><option value="">全部肌肉</option></select></div>
+      <div id="logChart"></div>
+      <div id="logList"></div>
+      <div class="row small"><button id="exportJson">导出 JSON</button><button id="exportCsv">导出 CSV</button><label class="btnlike">导入<input type="file" id="importJson" accept=".json" hidden></label></div>
+      <p class="hint" id="storeHint"></p>
+    </section>
+  </aside>
+
+  <main id="stage">
+    <canvas id="c"></canvas>
+    <div id="tip"></div>
+    <div id="toolbar">
+      <button data-view="front" title="正面">前</button><button data-view="back" title="背面">后</button>
+      <button data-view="left" title="左侧（身体左侧）">左</button><button data-view="right" title="右侧（身体右侧）">右</button>
+      <button data-view="head" title="头颈特写">头颈</button><button data-view="trunk" title="躯干特写">躯干</button>
+      <span class="sep"></span>
+      <button id="btnShowAll" title="显示所有被隐藏的结构">全部显示</button>
+      <button id="btnUndo" title="撤销上一次隐藏">撤销</button>
+      <button id="btnGhost" title="其他结构半透明">透视</button>
+    </div>
+    <div id="loading">正在加载模型…</div>
+    <button id="menuBtn" aria-label="菜单">☰</button>
+  </main>
+
+  <aside id="info" class="hidden">
+    <button class="close" id="infoClose">×</button>
+    <div id="infoBody"></div>
+  </aside>
+</div>
+
+<dialog id="logDlg">
+  <form method="dialog" id="logForm">
+    <h3>记录不适</h3>
+    <label>肌肉 / 结构<select name="muscle" id="fMuscle" required></select></label>
+    <div class="row">
+      <label>侧别<select name="side"><option value="right">右</option><option value="left">左</option><option value="both">双侧</option><option value="mid">正中</option></select></label>
+      <label>时间<input type="datetime-local" name="time" required></label>
+    </div>
+    <label><span>疼痛 / 不适程度：<b id="painVal">3</b> / 10</span><input type="range" name="pain" min="0" max="10" value="3"></label>
+    <fieldset><legend>感觉</legend><div id="fFeel" class="chips"></div></fieldset>
+    <fieldset><legend>哪个动作能诱发？</legend><div id="fTests" class="chips"></div></fieldset>
+    <label>诱因<input name="trigger" placeholder="如：久坐、训练后、睡姿、搬重物"></label>
+    <label>备注<textarea name="note" rows="3" placeholder="位置细节、持续时间、处理方式、效果…"></textarea></label>
+    <input type="hidden" name="id">
+    <div class="row end"><button value="cancel" formnovalidate>取消</button><button id="logDelete" type="button" class="danger">删除</button><button value="ok" class="primary">保存</button></div>
+  </form>
+</dialog>
+
+<script src="data/muscles.js"></script>
+<script src="data/zh-terms.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
