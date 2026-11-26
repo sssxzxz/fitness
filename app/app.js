@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { initTestsUI, loadCustom, entryTestsHTML, bindInfoEvents, resultsText } from './tests-ui.js';
 
 
 const $ = s => document.querySelector(s);
@@ -36,6 +37,9 @@ scene.background = new THREE.Color(0x14171c);
 const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 50);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true; controls.dampingFactor = 0.12;
+controls.zoomToCursor = true; controls.screenSpacePanning = true; controls.panSpeed = 1.2;
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 scene.add(new THREE.HemisphereLight(0xffffff, 0x404858, 1.6));
 const key = new THREE.DirectionalLight(0xffffff, 1.6); camera.add(key); key.position.set(0.5, 1, 1);
 scene.add(camera);
@@ -183,15 +187,28 @@ function pick(ev) {
   camera.updateMatrixWorld(); ray.setFromCamera(ndc, camera);
   const cand = meshes.filter(m => m.visible && sysState[m.userData.sys].visible && m.material.opacity > 0.15);
   const hit = ray.intersectObjects(cand, false)[0];
+  lastHit = hit || null;
   return hit ? hit.object : null;
+}
+let lastHit = null;
+// 把点中的位置移到画面中心（旋转也会绕这个点进行）
+function centerOn(point) {
+  const offset = camera.position.clone().sub(controls.target);
+  tween(point.clone(), point.clone().add(offset), 350);
 }
 let downAt = null;
 canvas.addEventListener('pointerdown', e => downAt = [e.clientX, e.clientY]);
+let lastTap = { t: 0, x: 0, y: 0 };
 canvas.addEventListener('pointerup', e => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+  const now = performance.now(), dbl = now - lastTap.t < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 25;
+  const firstPoint = lastTap.point;
   const m = pick(e);
-  if (m) { selectMesh(m); } else { setSelection([]); closeInfo(); }
+  lastTap = { t: dbl ? 0 : now, x: e.clientX, y: e.clientY, point: lastHit && lastHit.point.clone() };
+  if (dbl) { const p = firstPoint || (lastHit && lastHit.point); if (p) centerOn(p); return; }   // 双击 / 双点：居中
+  if (m) { if (!selected.has(m) || primary !== m) selectMesh(m); } else { setSelection([]); closeInfo(); }
 });
+addEventListener('keydown', e => { if (e.key === 'f' && !e.target.matches('input,textarea,select') && selected.size) frame([...selected]); });
 let lastMove = 0;
 canvas.addEventListener('pointermove', e => {
   if (e.pointerType !== 'mouse' || !$('#optLabels').checked || e.buttons) { $('#tip').style.display = 'none'; return; }
@@ -236,11 +253,8 @@ $('#infoClose').onclick = () => { setSelection([]); closeInfo(); };
 function openInfo(html) { $('#infoBody').innerHTML = html; $('#info').classList.remove('hidden'); $('#info').scrollTop = 0; requestAnimationFrame(resize); }
 
 function entryHTML(e) {
-  const tests = e.tests.map(t => `<div class="card"><b>▶ ${esc(t.name)}</b>${esc(t.how)}<div class="cue">判断：${esc(t.cue)}</div></div>`).join('');
   return `
-   <h3>确认动作</h3>${tests}
-   <div class="card"><b>⇄ 拉伸确认</b>${esc(e.stretch)}<div class="cue">拉伸时同一位置出现牵拉痛，与抗阻测试结果互相印证。</div></div>
-   <div class="card"><b>☝ 触诊定位</b>${esc(e.palpate)}</div>
+   <h3>确认动作</h3>${entryTestsHTML(e)}
    <h3>与易混结构的区分</h3><ul>${e.diff.map(d => `<li>${esc(d)}</li>`).join('')}</ul>
    <h3>常见不适表现</h3><p style="font-size:13px;line-height:1.6;margin:4px 0">${esc(e.refer)}</p>
    <h3>解剖</h3><dl><dt>起点</dt><dd>${esc(e.origin)}</dd><dt>止点</dt><dd>${esc(e.insertion)}</dd><dt>神经支配</dt><dd>${esc(e.nerve)}</dd><dt>主要作用</dt><dd><ul>${e.actions.map(a => `<li>${esc(a)}</li>`).join('')}</ul></dd></dl>
@@ -251,13 +265,15 @@ function historyHTML(id) {
   const list = LOGS.filter(l => l.muscle === id).sort((a, b) => b.time.localeCompare(a.time));
   if (!list.length) return '';
   return `<h3>我的记录（${list.length}）</h3>${chartSVG(list.slice().reverse())}` + list.slice(0, 5).map(l =>
-    `<div class="card">${esc(l.time.replace('T', ' '))} · ${SIDEZH[l.side] || ''} · 程度 ${l.pain}/10<br>${esc((l.feel || []).join('、'))}${l.tests?.length ? ' · 诱发：' + esc(l.tests.join('、')) : ''}${l.note ? '<br>' + esc(l.note) : ''}</div>`).join('');
+    `<div class="card">${esc(l.time.replace('T', ' '))} · ${SIDEZH[l.side] || ''} · 程度 ${l.pain}/10<br>${esc((l.feel || []).join('、'))}${l.tests?.length ? ' · 诱发：' + esc(l.tests.join('、')) : ''}${l.results ? '<br>逐项：' + esc(resultsText(l.results) || '均正常') : ''}${l.note ? '<br>' + esc(l.note) : ''}</div>`).join('');
 }
 function defHTML(base) {
   const d = DEFS[base]; if (!d || !d.def) return '';
   return `<details><summary style="cursor:pointer;color:var(--mut);font-size:13px;margin-top:14px">英文释义（Z-Anatomy / Wikipedia）</summary><div class="def">${esc(d.def)}</div><div class="lic">文本与模型来自 Z-Anatomy（CC BY-SA 4.0），源自 BodyParts3D 与 Wikipedia。</div></details>`;
 }
+let curWhole = false;
 function showInfoForMesh(m, whole = false) {
+  curWhole = whole;
   const u = m.userData, e = byBase[u.base], zh = zhOf(u.base);
   const crumb = [SYS[u.sys].zh, ...u.groups.slice(1).map(g => zhOf(g) || g)].join(' › ');
   const la = DEFS[u.base]?.la;
@@ -380,6 +396,7 @@ function renderLogs() {
   $('#logList').innerHTML = list.map(l => `<div class="logitem" data-id="${esc(l.id)}" style="border-left-color:hsl(${110 - l.pain * 11},80%,50%)">
      <b>${esc(labelOf(l.muscle))}</b>（${SIDEZH[l.side] || ''}） 程度 ${l.pain}/10
      <div class="meta">${esc(l.time.replace('T', ' '))} · ${esc((l.feel || []).join('、'))}${l.tests?.length ? ' · 诱发：' + esc(l.tests.join('、')) : ''}</div>
+     ${l.results ? `<div class="meta">逐项测试：${esc(resultsText(l.results) || '均正常')}</div>` : ''}
      ${l.note ? `<div>${esc(l.note)}</div>` : ''}</div>`).join('') || '<p class="hint">还没有记录。点击模型中的肌肉，再点「记录不适」。</p>';
   $('#logList').onclick = e => { const d = e.target.closest('.logitem'); if (d) openLog(LOGS.find(l => l.id === d.dataset.id)); };
   $('#logChart').innerHTML = f ? chartSVG(list.slice().reverse()) : '';
@@ -429,7 +446,8 @@ function openLog(log = {}) {
       muscle: f.muscle.value, side: f.side.value, time: f.time.value, pain: +f.pain.value,
       feel: [...$('#fFeel').querySelectorAll('input:checked')].map(i => i.value),
       tests: [...$('#fTests').querySelectorAll('input:checked')].map(i => i.value),
-      trigger: f.trigger.value.trim(), note: f.note.value.trim()
+      trigger: f.trigger.value.trim(), note: f.note.value.trim(),
+      ...(log.results ? { results: log.results, summary: log.summary, kind: log.kind } : {})
     });
   };
 }
@@ -456,12 +474,14 @@ $('#tabs').onclick = e => {
 $('#menuBtn').onclick = () => $('#side').classList.toggle('open');
 function closeSideMobile() { if (innerWidth <= 820) $('#side').classList.remove('open'); }
 
-window.__dbg = { meshes, THREE, camera, pick: (x, y) => pick({ clientX: x, clientY: y })?.userData.name, ready: () => !pending && sysState.muscular?.loaded && sysState.skeletal?.loaded };
+window.__dbg = { meshes, THREE, camera, controls, pick: (x, y) => pick({ clientX: x, clientY: y })?.userData.name, ready: () => !pending && sysState.muscular?.loaded && sysState.skeletal?.loaded };
 // ───────── boot ─────────
 (async function boot() {
   [INDEX, DEFS] = await Promise.all([fetch('data/index.json').then(r => r.json()), fetch('data/definitions.json').then(r => r.json())]);
   for (const s of SYSTEMS) { const g = new THREE.Group(); g.visible = !!s.on; scene.add(g); sysState[s.key] = { group: g, loaded: false, visible: !!s.on, opacity: 1 }; }
-  buildLayers(); buildFocus(); buildSearch(); await loadLogs(); renderLogs();
+  buildLayers(); buildFocus(); buildSearch(); await loadLogs(); await loadCustom(serverMode); renderLogs();
+  initTestsUI({ isServer: () => serverMode, saveLog, MUSCLES, onChange: () => { if (primary) { const st = $('#info').scrollTop; showInfoForMesh(primary, curWhole); $('#info').scrollTop = st; } } });
+  bindInfoEvents($('#infoBody'));
   resize(); view('front');
   await Promise.all(SYSTEMS.filter(s => s.on).map(s => loadSystem(s.key)));
   const box = new THREE.Box3(); sysState.skeletal.group.traverse(o => o.isMesh && box.expandByObject(o));

@@ -28,7 +28,9 @@
         <label class="chk"><input type="checkbox" id="optHeat"> 按近 30 天不适程度着色</label>
         <label class="chk"><input type="checkbox" id="optLabels" checked> 鼠标悬停显示名称</label>
       </div>
-      <p class="hint">点击模型上的结构查看名称；拖动旋转，滚轮/双指缩放，右键/双指拖动平移。</p>
+      <div class="help"><b>操作方法</b>
+        <div class="desk">左键拖动：旋转<br>右键 / 中键拖动（或按住 Shift + 左键）：平移画面<br>滚轮：朝鼠标所指位置缩放<br><b>双击</b>某处：把它移到画面中心，之后绕它旋转<br>单击：选中结构 · F：聚焦选中 · H：隐藏选中</div>
+        <div class="touch">单指拖动：旋转<br>双指拖动：平移画面 · 双指捏合：缩放<br><b>双击</b>某处：移到画面中心<br>单击：选中结构</div></div>
     </section>
     <section class="pane" id="pane-focus">
       <p class="hint">头颈与躯干重点肌肉。点击查看确认动作并在模型中高亮。</p>
@@ -88,8 +90,31 @@
   </form>
 </dialog>
 
+<dialog id="mediaDlg">
+  <form method="dialog" id="mediaForm">
+    <h3>编辑：<span id="mTitle"></span></h3>
+    <div id="mList"></div>
+    <fieldset><legend>添加视频 / 图片</legend>
+      <label id="mFileRow">上传本地文件（视频或图片）<input type="file" id="mFile" accept="video/*,image/*"></label>
+      <p class="hint" id="mLocalHint">未连接本地服务器，只能添加网络链接。用启动脚本运行后可上传本地文件。</p>
+      <label>或粘贴链接（B 站 / YouTube / 视频或图片网址）<input id="mUrl" placeholder="https://www.bilibili.com/video/BV..."></label>
+      <div class="row"><label>从第几秒开始<input id="mStart" type="number" min="0" placeholder="可选"></label><label>到第几秒结束<input id="mEnd" type="number" min="0" placeholder="可选"></label></div>
+      <label>标题<input id="mCap" placeholder="可选，如：正面示范"></label>
+      <div class="row"><button type="button" id="mAdd">＋ 添加</button><span id="mProg" class="hint"></span></div>
+    </fieldset>
+    <label>我的补充说明<textarea id="mNote" rows="4" placeholder="自己测试时的要点、教练/医生的提醒、注意事项…"></textarea></label>
+    <div class="row end"><button value="cancel" formnovalidate>取消</button><button value="ok" class="primary">保存</button></div>
+  </form>
+</dialog>
+
+<dialog id="guideDlg" class="guide">
+  <div id="guideBody"></div>
+  <div class="row end gnav"><button type="button" id="gClose">关闭</button><span style="flex:1"></span><button type="button" id="gPrev">上一项</button><button type="button" id="gNext" class="primary">开始</button></div>
+</dialog>
+
 <script src="data/muscles.js"></script>
 <script src="data/zh-terms.js"></script>
+<script src="data/tests-detail.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>
