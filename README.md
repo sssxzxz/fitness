@@ -42,7 +42,7 @@
 
 ## 版本管理
 
-这个文件夹是 Git 仓库，每个版本都有标签。查看历史、对比、退回旧版本的方法见 `版本管理说明.md`；更新内容见 `CHANGELOG.md`。
+项目保存在 GitHub 私有仓库 https://github.com/sssxzxz/fitness ，每个版本有一个 `release/版本号` 分支。同步、查看历史、退回旧版本的方法见 `版本管理说明.md`；更新内容见 `CHANGELOG.md`。
 
 ## 数据说明与核对
 
