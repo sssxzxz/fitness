@@ -7,7 +7,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { makeMaterial, GHOST, setupLighting, PIX } from './materials.js';
+import { makeMaterial, makeIllusMaterial, OutlinePass, GHOST, setupLighting, setLightStyle, PIX } from './materials.js';
 import { initTestsUI, loadCustom, entryTestsHTML, bindInfoEvents, resultsText, customHTML } from './tests-ui.js';
 import { initFitness, loadWorkouts, careHTML, exercisesForBase, volumeByBase, renderTraining } from './fitness.js';
 import { initExtras } from './extras.js';
@@ -29,7 +29,7 @@ const REGION_COLOR = { '头部': '#ce93d8', '颈部': '#4fb3ff', '胸部': '#ffb
 const isMobile = matchMedia('(pointer:coarse)').matches || innerWidth <= 820;
 
 // 个人设置（保存在浏览器）
-const PREF = Object.assign({ hd: !isMobile, ao: false, bg: 'light', autoInfo: !isMobile, bothSides: false }, (() => { try { return JSON.parse(localStorage.getItem('viewerPref') || '{}'); } catch { return {}; } })());
+const PREF = Object.assign({ hd: !isMobile, ao: false, bg: 'light', autoInfo: !isMobile, bothSides: false, style: 'illus', outline: true }, (() => { try { return JSON.parse(localStorage.getItem('viewerPref') || '{}'); } catch { return {}; } })());
 const savePref = () => { try { localStorage.setItem('viewerPref', JSON.stringify(PREF)); } catch {} };
 
 let INDEX = {}, DEFS = {}, LAYERS = {};
@@ -78,11 +78,11 @@ composer.addPass(gtao);
 composer.addPass(new OutputPass());
 
 const HL = new THREE.Color(0x14b8d4), SEC = new THREE.Color(0xff8a00), BLACK = new THREE.Color(0);
-const PHASE_COLOR = { con: 0xff2a1a, iso: 0xb026d9, ecc: 0x1fbf5a };
+const PHASE_COLOR = { con: 0x1e7bff, iso: 0xb026d9, ecc: 0x1fbf5a };
 function setPhase(kind, text) {
   HL.set(kind ? PHASE_COLOR[kind] : 0x14b8d4);
   const el = document.getElementById('apPhase'); if (el) { el.textContent = text || ''; el.dataset.k = kind || ''; }
-  selected.forEach(m => { if (m.material !== GHOST) m.material.emissive.copy(HL); });
+  applyStyles();
 }
 let bodyBox = new THREE.Box3(new THREE.Vector3(-0.3, 0, -0.15), new THREE.Vector3(0.3, 1.75, 0.15));
 let needRender = true;
@@ -91,6 +91,7 @@ controls.addEventListener('change', requestRender);
 function resize() {
   const r = canvas.parentElement.getBoundingClientRect();
   renderer.setSize(r.width, r.height, false); composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(r.width, r.height);
+  outline.setSize(Math.round(r.width * renderer.getPixelRatio()), Math.round(r.height * renderer.getPixelRatio())); outline.mat.uniforms.uWidth.value = Math.max(1, renderer.getPixelRatio() * 0.8);
   camera.aspect = r.width / r.height;
   const info = document.getElementById('info');
   const sheet = innerWidth <= 820 && info && !info.classList.contains('hidden') ? info.offsetHeight : 0;
@@ -98,15 +99,19 @@ function resize() {
   camera.updateProjectionMatrix(); PIX.value = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.max(1, r.height); requestRender();
 }
 new ResizeObserver(resize).observe(canvas.parentElement);
+const outline = new OutlinePass(renderer);
 const afterRender = [];
 (function loop() {
   requestAnimationFrame(loop);
   if (controls.update() || needRender) {
-    if (PREF.ao) composer.render(); else renderer.render(scene, camera);
+    renderNow();
     needRender = false; afterRender.forEach(f => f());
   }
 })();
-function renderNow() { if (PREF.ao) composer.render(); else renderer.render(scene, camera); }
+function renderNow() {
+  if (PREF.ao) composer.render(); else renderer.render(scene, camera);
+  if (PREF.outline) outline.render(scene, camera, meshes, m => m.material !== GHOST);
+}
 
 // ───────── naming helpers ─────────
 const showEn = () => !document.body.classList.contains('no-en');
@@ -121,6 +126,47 @@ function zhOf(base) {
 function hash(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return h; }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// ───────── 画面风格：示意（Innerbody 式）/ 写实 ─────────
+function buildMat(o, key, base) {
+  const h = (Math.abs(hash(base)) % 1000) / 1000;
+  return PREF.style === 'real' ? makeMaterial(o, key, base, h * 0.16 - 0.08) : makeIllusMaterial(key, base, h);
+}
+// 示意风格：把法线在相邻顶点间平均几次，抹掉模型表面细小的纤维起伏，表面看起来干净平滑
+function smoothNormals(geo, iters = 4) {
+  const n = geo.attributes.normal, idx = geo.index, P = geo.attributes.position; if (!n || !idx) return n;
+  // 位置相同的顶点合并成一个（有些模型三角形之间没有连起来）
+  const cnt = n.count, canon = new Uint32Array(cnt), map = new Map(); let U = 0;
+  for (let v = 0; v < cnt; v++) {
+    const k = Math.round(P.getX(v) * 2e4) + ',' + Math.round(P.getY(v) * 2e4) + ',' + Math.round(P.getZ(v) * 2e4);
+    let c = map.get(k); if (c === undefined) { c = U++; map.set(k, c); } canon[v] = c;
+  }
+  let cur = new Float32Array(U * 3);
+  for (let v = 0; v < cnt; v++) { const c = canon[v] * 3; cur[c] += n.getX(v); cur[c + 1] += n.getY(v); cur[c + 2] += n.getZ(v); }
+  const a = idx.array;
+  for (let it = 0; it < iters; it++) {
+    const acc = new Float32Array(cur);
+    for (let i = 0; i < a.length; i += 3) {
+      const i0 = canon[a[i]] * 3, i1 = canon[a[i + 1]] * 3, i2 = canon[a[i + 2]] * 3;
+      for (let k = 0; k < 3; k++) { const s3 = cur[i0 + k] + cur[i1 + k] + cur[i2 + k]; acc[i0 + k] += s3; acc[i1 + k] += s3; acc[i2 + k] += s3; }
+    }
+    for (let c = 0; c < U; c++) { const o = c * 3, l = Math.hypot(acc[o], acc[o + 1], acc[o + 2]) || 1; acc[o] /= l; acc[o + 1] /= l; acc[o + 2] /= l; }
+    cur = acc;
+  }
+  const out = new Float32Array(cnt * 3);
+  for (let v = 0; v < cnt; v++) { const c = canon[v] * 3, o = v * 3, l = Math.hypot(cur[c], cur[c + 1], cur[c + 2]) || 1; out[o] = cur[c] / l; out[o + 1] = cur[c + 1] / l; out[o + 2] = cur[c + 2] / l; }
+  return new THREE.BufferAttribute(out, 3);
+}
+function applyNormals(m) {
+  const g = m.geometry, u = m.userData;
+  if (!u.nOrig) u.nOrig = g.attributes.normal;
+  if (PREF.style !== "real" && (u.sys === "muscular" || u.sys === "skeletal")) { if (!u.nSmooth) u.nSmooth = smoothNormals(g, Math.round(THREE.MathUtils.clamp(Math.sqrt(g.attributes.position.count) / 20, 2, 6))); g.setAttribute("normal", u.nSmooth); }
+  else g.setAttribute('normal', u.nOrig);
+}
+function applyStyleMode() {
+  for (const m of meshes) { const u = m.userData, mat = buildMat(m, u.sys, u.base); u.mat = mat; u.color = mat.color.clone(); applyNormals(m); }
+  setLightStyle(PREF.style);
+  applyStyles();
+}
 // ───────── loading ─────────
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
 const HD_AVAILABLE = { muscular: true, skeletal: true };
@@ -150,10 +196,11 @@ async function loadSystem(key) {
       }
       o.geometry.deleteAttribute('normal'); o.geometry.computeVertexNormals();   // 统一法线方向，避免部分肌肉发暗
       o.geometry.computeBoundingSphere(); o.geometry.computeBoundingBox();
-      const mat = makeMaterial(o, key, base, ((Math.abs(hash(base)) % 100) / 100) * 0.16 - 0.08);
+      const mat = buildMat(o, key, base);
       o.material = mat;
       o.userData = { name, base, side, groups, sys: key, mat, color: mat.color.clone(), state: 'v', layer: LAYERS[name] };
       if (key === 'muscular' && (groups.some(g => /fasci/i.test(g)) || /fascia|aponeuros|linea alba|retinacul|septum|sheath/i.test(base))) o.userData.fascia = true;
+      applyNormals(o);
       meshes.push(o); meshByName.set(name, o);
     }
     st.group.add(gltf.scene);
@@ -191,7 +238,9 @@ function applyStyles() {
       const v = volMap[u.base];
       if (v) mat.color.setHSL(0.6 - 0.45 * Math.min(1, v / vmax), 0.85, 0.45); else mat.color.setRGB(0.5, 0.48, 0.47);
     } else mat.color.copy(u.color);
-    mat.emissive.copy(isSel ? HL : isSec ? SEC : BLACK); mat.emissiveIntensity = isSel ? 0.85 : isSec ? 0.5 : 0;
+    if (PREF.style !== 'real' && (isSel || isSec)) {   // 示意风格：选中的结构直接换成醒目的纯色
+      mat.color.copy(isSel ? HL : SEC); mat.emissive.copy(isSel ? HL : SEC); mat.emissiveIntensity = 0.25;
+    } else { mat.emissive.copy(isSel ? HL : isSec ? SEC : BLACK); mat.emissiveIntensity = isSel ? 0.85 : isSec ? 0.5 : 0; }
   }
   requestRender(); updateHistoryButtons(); window.dispatchEvent(new Event('styles-changed'));
 }
@@ -575,6 +624,8 @@ function buildLayers() {
   $('#optAutoInfo').checked = PREF.autoInfo; $('#optAutoInfo').onchange = e => { PREF.autoInfo = e.target.checked; savePref(); };
   $('#optAO').checked = PREF.ao; $('#optAO').onchange = e => { PREF.ao = e.target.checked; savePref(); requestRender(); };
   $('#optHD').checked = PREF.hd; $('#optHD').onchange = e => { PREF.hd = e.target.checked; savePref(); toast('刷新页面后生效'); };
+  $('#optStyle').value = PREF.style; $('#optStyle').onchange = e => { PREF.style = e.target.value; savePref(); applyStyleMode(); };
+  $('#optOutline').checked = PREF.outline; $('#optOutline').onchange = e => { PREF.outline = e.target.checked; savePref(); requestRender(); };
   $('#optBg').value = PREF.bg; $('#optBg').onchange = e => { PREF.bg = e.target.value; savePref(); applyBg(); };
   $('#optColor').onchange = e => { const v = e.target.value; heatMap = v === 'pain' ? computeHeat() : null; volMap = v === 'volume' ? volumeByBase(7) : null; applyStyles(); };
 }
@@ -714,7 +765,7 @@ window.__dbg = { PREF, requestRender, composer, gtao, meshes, THREE, camera, con
 (async function boot() {
   [INDEX, DEFS, LAYERS] = await Promise.all(['index', 'definitions', 'layers'].map(n => fetch(`data/${n}.json`).then(r => r.json()).catch(() => ({}))));
   for (const s of SYSTEMS) { const g = new THREE.Group(); g.visible = !!s.on; scene.add(g); sysState[s.key] = { group: g, loaded: false, visible: !!s.on }; }
-  applyBg();
+  applyBg(); setLightStyle(PREF.style);
   buildLayers(); buildFocus(); await loadLogs(); await loadCustom(serverMode); renderLogs();
   initTestsUI({ isServer: () => serverMode, saveLog, MUSCLES, onChange: refreshInfo });
   await loadWorkouts(serverMode);

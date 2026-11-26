@@ -128,7 +128,87 @@ export async function setupLighting(renderer, scene, camera, RoomEnvironment) {
   scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.45;
   scene.add(new THREE.HemisphereLight(0xfff4ee, 0x2a2224, 0.35));
+  const hemi = scene.children.find(o => o.isHemisphereLight);
   const key = new THREE.DirectionalLight(0xfff1e6, 2.8); key.position.set(0.6, 1.1, 1.2); camera.add(key);
   const fill = new THREE.DirectionalLight(0xdfe8ff, 0.55); fill.position.set(-1.2, 0.2, 0.6); camera.add(fill);
   const rim = new THREE.DirectionalLight(0xffffff, 1.1); rim.position.set(0, 0.6, -1.5); camera.add(rim);
+  LIGHTS = { renderer, scene, hemi, key, fill, rim };
+}
+let LIGHTS = null;
+// 按风格调整光照：示意风格光线更均匀、颜色不做色调映射
+export function setLightStyle(style) {
+  if (!LIGHTS) return; const L = LIGHTS;
+  if (style === 'real') {
+    L.renderer.toneMapping = THREE.ACESFilmicToneMapping; L.scene.environmentIntensity = 0.45;
+    L.hemi.intensity = 0.35; L.key.intensity = 2.8; L.fill.intensity = 0.55; L.rim.intensity = 1.1;
+  } else {
+    L.renderer.toneMapping = THREE.NeutralToneMapping; L.scene.environmentIntensity = 0.35;
+    L.hemi.intensity = 1.1; L.key.intensity = 1.5; L.fill.intensity = 0.6; L.rim.intensity = 0.5;
+  }
+}
+
+// ───────── 示意风格（Innerbody 式）：干净的哑光色块，每块肌肉颜色略有区别 ─────────
+const ILLUS = {
+  muscle: 0xc0392f, tendon: 0xeeeae2, fascia: 0xeeeae2, bone: 0xefe7d4, cartilage: 0xc7dde8, tooth: 0xfaf7ef,
+  artery: 0xd0302a, vein: 0x3c63c4, nerve: 0xf2cc45, organ: 0xd07a6e, ligament: 0xe4e0d4, lymph: 0x8fc45c,
+};
+export function makeIllusMaterial(sys, base, h) {   // h: 0–1 的稳定随机数（按名称）
+  const kind = kindOf(sys, base);
+  const col = new THREE.Color(ILLUS[kind]);
+  if (kind === 'muscle') col.offsetHSL((h - 0.5) * 0.008, 0, (((h * 7.31) % 1) - 0.5) * 0.07);
+  else col.offsetHSL(0, 0, (h - 0.5) * 0.04);
+  return new THREE.MeshStandardMaterial({ color: col, roughness: kind === 'bone' ? 0.8 : 0.62, metalness: 0, side: THREE.DoubleSide,
+    envMapIntensity: 0.6 });
+}
+
+// ───────── 轮廓线：按“结构编号”渲染一张图，相邻像素编号不同的地方画线 ─────────
+export class OutlinePass {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.target = new THREE.WebGLRenderTarget(4, 4, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false });
+    this.target.texture.colorSpace = THREE.NoColorSpace;
+    this.idMats = new Map();
+    this.quadScene = new THREE.Scene(); this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: { tId: { value: this.target.texture }, uTexel: { value: new THREE.Vector2() }, uColor: { value: new THREE.Color(0x3a0d0a) }, uWidth: { value: 1 }, uOpacity: { value: 0.75 } },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `uniform sampler2D tId; uniform vec2 uTexel; uniform vec3 uColor; uniform float uWidth, uOpacity; varying vec2 vUv;
+        void main(){
+          vec3 c = texture2D(tId, vUv).rgb; float e = 0.0;
+          for (int i = 0; i < 8; i++) {
+            vec2 d = vec2(i == 0 ? 1.0 : i == 1 ? -1.0 : i == 4 ? 1.0 : i == 5 ? -1.0 : i == 6 ? 1.0 : i == 7 ? -1.0 : 0.0,
+                          i == 2 ? 1.0 : i == 3 ? -1.0 : i == 4 ? 1.0 : i == 5 ? -1.0 : i == 6 ? -1.0 : i == 7 ? 1.0 : 0.0);
+            vec3 n = texture2D(tId, vUv + d * uTexel * uWidth).rgb;
+            float diff = step(0.002, distance(n, c));
+            e += diff * (i < 4 ? 1.0 : 0.5);
+          }
+          e = clamp(e / 3.0, 0.0, 1.0);
+          if (e <= 0.0) discard;
+          gl_FragColor = vec4(uColor, e * uOpacity);
+        }`,
+      transparent: true, depthTest: false, depthWrite: false,
+    });
+    this.quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.mat));
+  }
+  setSize(w, h) { this.target.setSize(w, h); this.mat.uniforms.uTexel.value.set(1 / w, 1 / h); }
+  idMat(m, i) {
+    let mat = this.idMats.get(m);
+    if (!mat) { const id = i + 1; mat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(((id >> 16) & 255) / 255, ((id >> 8) & 255) / 255, (id & 255) / 255, THREE.SRGBColorSpace), side: THREE.DoubleSide }); mat.toneMapped = false; this.idMats.set(m, mat); }
+    return mat;
+  }
+  render(scene, camera, meshes, isSolid) {
+    const r = this.renderer, saved = [], hidden = [];
+    meshes.forEach((m, i) => {
+      if (!m.visible) return;
+      if (!isSolid(m)) { m.visible = false; hidden.push(m); return; }
+      saved.push([m, m.material]); m.material = this.idMat(m, i);
+    });
+    const bg = scene.background, tm = r.toneMapping; scene.background = null; r.toneMapping = THREE.NoToneMapping;
+    const others = []; scene.traverse(o => { if (o.isMesh && o.visible && !this.idMats.has(o) && !o.isSkinnedMesh && !saved.find(s => s[0] === o)) { o.visible = false; others.push(o); } });
+    r.setRenderTarget(this.target); r.setClearColor(0x000000, 1); r.clear(); r.render(scene, camera); r.setRenderTarget(null);
+    others.forEach(o => o.visible = true);
+    scene.background = bg; r.toneMapping = tm;
+    saved.forEach(([m, mat]) => m.material = mat); hidden.forEach(m => m.visible = true);
+    const ac = r.autoClear; r.autoClear = false; r.render(this.quadScene, this.quadCam); r.autoClear = ac;
+  }
 }
