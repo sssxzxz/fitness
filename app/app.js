@@ -2,9 +2,15 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { makeMaterial, GHOST, setupLighting, PIX } from './materials.js';
 import { initTestsUI, loadCustom, entryTestsHTML, bindInfoEvents, resultsText, customHTML } from './tests-ui.js';
 import { initFitness, loadWorkouts, careHTML, exercisesForBase, volumeByBase, renderTraining } from './fitness.js';
-
+import { initExtras } from './extras.js';
 
 const $ = s => document.querySelector(s);
 const MUSCLES = window.MUSCLES, ZH = { ...window.ZH_TERMS, ...(window.ZH_NAMES || {}) };
@@ -19,47 +25,81 @@ const SYSTEMS = [
 ];
 const SYS = Object.fromEntries(SYSTEMS.map(s => [s.key, s]));
 const REGION_COLOR = { '头部': '#ce93d8', '颈部': '#4fb3ff', '胸部': '#ffb74d', '腹部': '#81c784', '背部': '#ef9a9a' };
+const isMobile = matchMedia('(pointer:coarse)').matches || innerWidth <= 820;
 
-let INDEX = {}, DEFS = {};
-const byBase = {};            // base -> muscle entry
+// 个人设置（保存在浏览器）
+const PREF = Object.assign({ hd: !isMobile, ao: false, bg: 'light', autoInfo: !isMobile, bothSides: false }, (() => { try { return JSON.parse(localStorage.getItem('viewerPref') || '{}'); } catch { return {}; } })());
+const savePref = () => { try { localStorage.setItem('viewerPref', JSON.stringify(PREF)); } catch {} };
+
+let INDEX = {}, DEFS = {}, LAYERS = {};
+const byBase = {};
 MUSCLES.forEach(m => m.bases.forEach(b => byBase[b] = m));
-const meshes = [];            // all loaded meshes
+const meshes = [];
 const meshByName = new Map();
-const sysState = {};          // key -> {group, loaded, loading, visible, opacity}
-let selected = new Set(), primary = null, ghost = false, showBothSides = true;
-const hiddenStack = [];
+const sysState = {};
+let selected = new Set(), primary = null, secondary = new Set();
+let tool = 'select', panMode = false, layerLevel = 0;
 
 // ───────── three setup ─────────
 const canvas = $('#c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x14171c);
-const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 50);
+const camera = new THREE.PerspectiveCamera(32, 1, 0.01, 50);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true; controls.dampingFactor = 0.12;
 controls.zoomToCursor = true; controls.screenSpacePanning = true; controls.panSpeed = 1.2;
-controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
-controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
-scene.add(new THREE.HemisphereLight(0xffffff, 0x404858, 1.6));
-const key = new THREE.DirectionalLight(0xffffff, 1.6); camera.add(key); key.position.set(0.5, 1, 1);
+function applyControlMode() {
+  controls.mouseButtons = { LEFT: panMode ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: panMode ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN };
+  controls.touches = { ONE: panMode ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+  $('#navPan')?.classList.toggle('on', panMode);
+}
+applyControlMode();
 scene.add(camera);
-const HL = new THREE.Color(0x2a8cff);
+setupLighting(renderer, scene, camera, RoomEnvironment);
+function bgTexture(mode) {
+  const c = document.createElement('canvas'); c.width = 8; c.height = 512; const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 0, 512);
+  if (mode === 'dark') { gr.addColorStop(0, '#2a2f37'); gr.addColorStop(1, '#101317'); } else { gr.addColorStop(0, '#fbfbfc'); gr.addColorStop(1, '#d5d9de'); }
+  g.fillStyle = gr; g.fillRect(0, 0, 8, 512);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function applyBg() { scene.background = bgTexture(PREF.bg); document.body.classList.toggle('bg-light', PREF.bg !== 'dark'); requestRender(); }
+// 后期：环境光遮蔽（GTAO）
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const gtao = new GTAOPass(scene, camera, 800, 600);
+gtao.updateGtaoMaterial({ radius: 0.06, distanceExponent: 1, thickness: 1, scale: 1, samples: 16, distanceFallOff: 1 });
+gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
+gtao.blendIntensity = 0.9;
+{ const ov = gtao.overrideVisibility.bind(gtao); gtao.overrideVisibility = function () { ov(); scene.traverse(o => { if (o.isMesh && o.material?.transparent) o.visible = false; }); }; }
+composer.addPass(gtao);
+composer.addPass(new OutputPass());
+
+const HL = new THREE.Color(0x14b8d4), SEC = new THREE.Color(0xff8a00), BLACK = new THREE.Color(0);
 let bodyBox = new THREE.Box3(new THREE.Vector3(-0.3, 0, -0.15), new THREE.Vector3(0.3, 1.75, 0.15));
 let needRender = true;
 const requestRender = () => needRender = true;
 controls.addEventListener('change', requestRender);
 function resize() {
   const r = canvas.parentElement.getBoundingClientRect();
-  renderer.setSize(r.width, r.height, false);
+  renderer.setSize(r.width, r.height, false); composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(r.width, r.height);
   camera.aspect = r.width / r.height;
   const info = document.getElementById('info');
   const sheet = innerWidth <= 820 && info && !info.classList.contains('hidden') ? info.offsetHeight : 0;
   if (sheet) camera.setViewOffset(r.width, r.height, 0, sheet / 2, r.width, r.height); else camera.clearViewOffset();
-  camera.updateProjectionMatrix(); requestRender();
+  camera.updateProjectionMatrix(); PIX.value = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.max(1, r.height); requestRender();
 }
 new ResizeObserver(resize).observe(canvas.parentElement);
-(function loop() { requestAnimationFrame(loop); if (controls.update() || needRender) { renderer.render(scene, camera); needRender = false; } })();
+const afterRender = [];
+(function loop() {
+  requestAnimationFrame(loop);
+  if (controls.update() || needRender) {
+    if (PREF.ao) composer.render(); else renderer.render(scene, camera);
+    needRender = false; afterRender.forEach(f => f());
+  }
+})();
+function renderNow() { if (PREF.ao) composer.render(); else renderer.render(scene, camera); }
 
 // ───────── naming helpers ─────────
 const showEn = () => !document.body.classList.contains('no-en');
@@ -72,27 +112,21 @@ function zhOf(base) {
   return ZH[base] || ZH[clean] || ZH[clean.replace(/ muscles?$/, '')] || (byBase[base] && byBase[base].zh) || '';
 }
 function hash(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return h; }
-function baseColor(sys, name) {
-  const c = new THREE.Color(SYS[sys].color);
-  const n = name.toLowerCase();
-  if (sys === 'muscular' && /fascia|aponeuros|tendon|linea alba|ligament|retinacul|septum|tarsus|ring/.test(n)) c.set(0xd8cdb8);
-  if (sys === 'cardiovascular' && /vein|vena|venous|sinus/.test(n)) c.set(0x3f6fd1);
-  if (sys === 'skeletal' && /cartilage|disc/.test(n)) c.set(0xa9c7d6);
-  const v = ((hash(name) % 100) / 100) * 0.08 - 0.04;
-  c.offsetHSL(0, 0, v);
-  return c;
-}
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ───────── loading ─────────
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+const HD_AVAILABLE = { muscular: true, skeletal: true };
 async function loadSystem(key) {
   const st = sysState[key];
   if (st.loaded) return; if (st.loading) return st.loading;
   setLoading(`正在加载：${SYS[key].zh}…`);
-  st.loading = new Promise((res, rej) => loader.load(`models/${key}.glb`, gltf => {
+  const url = `models/${key}${PREF.hd && HD_AVAILABLE[key] ? '_hd' : ''}.glb`;
+  st.loading = new Promise((res, rej) => loader.load(url, gltf => {
     const json = gltf.parser.json, assoc = gltf.parser.associations;
     const info = INDEX[key] || {};
     const list = [];
+    gltf.scene.updateMatrixWorld(true);
     gltf.scene.traverse(o => { if (o.isMesh) list.push(o); });
     for (const o of list) {
       let a = assoc.get(o), name = null;
@@ -101,72 +135,114 @@ async function loadSystem(key) {
       const meta = name && info[name];
       if (!meta) { o.removeFromParent(); continue; }
       const [base, side, groups] = meta;
-      const col = baseColor(key, base);
-      o.material = new THREE.MeshStandardMaterial({ color: col, roughness: 0.62, metalness: 0.0, side: THREE.DoubleSide });
-      o.userData = { name, base, side, groups, sys: key, color: col.clone() };
-      if (key === 'muscular' && (groups.some(g => /fasci/i.test(g)) || /fascia|aponeuros|linea alba|retinacul|septum|sheath/i.test(base))) {
-        o.userData.fascia = true; o.visible = $('#optFascia').checked;
-      }
       const pa = o.geometry.attributes.position;   // 解量化，保证拾取准确
       if (pa.isInterleavedBufferAttribute || pa.normalized || !(pa.array instanceof Float32Array)) {
         const f = new Float32Array(pa.count * 3);
         for (let i = 0; i < pa.count; i++) { f[i * 3] = pa.getX(i); f[i * 3 + 1] = pa.getY(i); f[i * 3 + 2] = pa.getZ(i); }
         o.geometry.setAttribute('position', new THREE.BufferAttribute(f, 3));
       }
+      o.geometry.deleteAttribute('normal'); o.geometry.computeVertexNormals();   // 统一法线方向，避免部分肌肉发暗
       o.geometry.computeBoundingSphere(); o.geometry.computeBoundingBox();
+      const mat = makeMaterial(o, key, base, ((Math.abs(hash(base)) % 100) / 100) * 0.16 - 0.08);
+      o.material = mat;
+      o.userData = { name, base, side, groups, sys: key, mat, color: mat.color.clone(), state: 'v', layer: LAYERS[name] };
+      if (key === 'muscular' && (groups.some(g => /fasci/i.test(g)) || /fascia|aponeuros|linea alba|retinacul|septum|sheath/i.test(base))) o.userData.fascia = true;
       meshes.push(o); meshByName.set(name, o);
     }
     st.group.add(gltf.scene);
     st.loaded = true; applyStyles(); setLoading(''); res();
+    window.dispatchEvent(new CustomEvent('system-loaded', { detail: key }));
   }, undefined, e => { setLoading('加载失败：' + key); rej(e); }));
   return st.loading;
 }
 let pending = 0;
 function setLoading(t) { if (t && t.startsWith('正在加载')) pending++; else if (!t) { pending = Math.max(0, pending - 1); if (pending) return; } const el = $('#loading'); el.textContent = t; el.style.display = t ? 'block' : 'none'; }
 
-// ───────── visual state ─────────
-let heatMap = null, volMap = null, secondary = new Set();
-const SEC = new THREE.Color(0xff8a00);
+// ───────── 显示状态：正常 v / 淡化 f / 隐藏 h ─────────
+let heatMap = null, volMap = null;
+const MAX_LAYER = 5;
+function layerFaded(u) {
+  if (!layerLevel) return false;
+  if (u.sys === 'muscular') return layerLevel > MAX_LAYER ? true : (u.layer || 99) <= layerLevel;
+  if (u.sys === 'skeletal') return layerLevel > MAX_LAYER + 1;
+  return false;
+}
+const isHidden = m => m.userData.state === 'h' || (m.userData.fascia && !$('#optFascia').checked);
+const isFaded = m => m.userData.state === 'f' || layerFaded(m.userData);
 function applyStyles() {
   const vmax = volMap ? Math.max(1, ...Object.values(volMap)) : 1;
   for (const m of meshes) {
-    const st = sysState[m.userData.sys];
-    const mat = m.material;
-    const isSel = selected.has(m), isSec = secondary.has(m);
-    let op = st.opacity;
-    if (ghost && selected.size && !isSel && !isSec) op = Math.min(op, 0.16);
-    mat.transparent = op < 0.999; mat.opacity = op; mat.depthWrite = op > 0.5;
-    if (heatMap && m.userData.sys === 'muscular') {
-      const hk = heatMap[byBase[m.userData.base]?.id] ?? heatMap[m.userData.base];
-      const h = hk == null ? null : (m.userData.side === 'l' ? hk.l : m.userData.side === 'r' ? hk.r : Math.max(hk.l ?? -1, hk.r ?? -1, -1) < 0 ? null : Math.max(hk.l ?? 0, hk.r ?? 0));
-      if (h != null) mat.color.setHSL(0.11 - 0.11 * (h / 10), 0.95, 0.5);
-      else mat.color.setRGB(0.42, 0.40, 0.40);
-    } else if (volMap && m.userData.sys === 'muscular') {
-      const v = volMap[m.userData.base];
-      if (v) mat.color.setHSL(0.6 - 0.45 * Math.min(1, v / vmax), 0.85, 0.5);   // 少：蓝 → 多：黄绿
-      else mat.color.setRGB(0.42, 0.40, 0.40);
-    } else mat.color.copy(m.userData.color);
-    mat.emissive.copy(isSel ? HL : isSec ? SEC : new THREE.Color(0)); mat.emissiveIntensity = isSel ? (m === primary ? 0.75 : 0.5) : isSec ? 0.45 : 0;
-    m.renderOrder = isSel || isSec ? 2 : 0;
+    const u = m.userData, isSel = selected.has(m), isSec = secondary.has(m);
+    m.visible = !isHidden(m);
+    if (isFaded(m) && !isSel && !isSec) { m.material = GHOST; m.renderOrder = 1; continue; }
+    const mat = u.mat; m.material = mat; m.renderOrder = isSel || isSec ? 2 : 0;
+    if (heatMap && u.sys === 'muscular') {
+      const hk = heatMap[byBase[u.base]?.id] ?? heatMap[u.base];
+      const h = hk == null ? null : (u.side === 'l' ? hk.l : u.side === 'r' ? hk.r : Math.max(hk.l ?? -1, hk.r ?? -1, -1) < 0 ? null : Math.max(hk.l ?? 0, hk.r ?? 0));
+      if (h != null) mat.color.setHSL(0.11 - 0.11 * (h / 10), 0.95, 0.45); else mat.color.setRGB(0.5, 0.48, 0.47);
+    } else if (volMap && u.sys === 'muscular') {
+      const v = volMap[u.base];
+      if (v) mat.color.setHSL(0.6 - 0.45 * Math.min(1, v / vmax), 0.85, 0.45); else mat.color.setRGB(0.5, 0.48, 0.47);
+    } else mat.color.copy(u.color);
+    mat.emissive.copy(isSel ? HL : isSec ? SEC : BLACK); mat.emissiveIntensity = isSel ? 0.85 : isSec ? 0.5 : 0;
   }
-  requestRender();
+  requestRender(); updateHistoryButtons(); window.dispatchEvent(new Event('styles-changed'));
 }
+
+// ───────── 撤销 / 重做 ─────────
+const undoStack = [], redoStack = [];
+function commit(changes) {   // changes: [[mesh, newState]]
+  const rec = changes.filter(([m, s]) => m.userData.state !== s).map(([m, s]) => [m, m.userData.state, s]);
+  if (!rec.length) return;
+  rec.forEach(([m, , s]) => m.userData.state = s);
+  undoStack.push(rec); redoStack.length = 0; applyStyles();
+}
+function undo() { const r = undoStack.pop(); if (!r) return; r.forEach(([m, from]) => m.userData.state = from); redoStack.push(r); applyStyles(); }
+function redo() { const r = redoStack.pop(); if (!r) return; r.forEach(([m, , to]) => m.userData.state = to); undoStack.push(r); applyStyles(); }
+function updateHistoryButtons() {
+  $('#tUndo') && ($('#tUndo').disabled = !undoStack.length); $('#tRedo') && ($('#tRedo').disabled = !redoStack.length);
+}
+const activeMeshes = () => meshes.filter(m => sysState[m.userData.sys].visible && !isHidden(m));
+function hideMeshes(list) { commit(list.map(m => [m, 'h'])); list.forEach(m => selected.delete(m)); if (!selected.size) deselect(); else applyStyles(); }
+function fadeMeshes(list) { commit(list.map(m => [m, 'f'])); deselect(); }
+function fadeOthers(list) { const keep = new Set(list); commit(activeMeshes().filter(m => !keep.has(m)).map(m => [m, 'f']).concat(list.map(m => [m, 'v']))); }
+function isolate(list) { const keep = new Set(list); commit(meshes.filter(m => !keep.has(m)).map(m => [m, 'h']).concat(list.map(m => [m, 'v']))); frame(list, 1.8); }
+function showMeshes(list) { commit(list.map(m => [m, 'v'])); }
+function resetAll() {
+  meshes.forEach(m => m.userData.state = 'v'); undoStack.length = 0; redoStack.length = 0;
+  setLayerLevel(0); heatMap = volMap = null; $('#optColor').value = '';
+  deselect(); view('front');
+}
+
+// ───────── 选择 ─────────
 function setSelection(list, prim, sec = []) {
-  selected = new Set(list); secondary = new Set(sec); primary = prim || list[0] || null; applyStyles();
+  selected = new Set(list); secondary = new Set(sec); primary = prim || list[0] || null; anchor = null; applyStyles(); updateLabel();
 }
+function deselect() { setSelection([]); closeInfo(); }
+function partners(m) { const u = m.userData; return meshes.filter(x => x.userData.base === u.base && x.userData.sys === u.sys); }
+function selectMesh(m, { add = false, point = null, openPanel = PREF.autoInfo } = {}) {
+  let list = PREF.bothSides ? partners(m) : [m];
+  if (add) { const s = new Set(selected); const allIn = list.every(x => s.has(x)); list.forEach(x => allIn ? s.delete(x) : s.add(x)); list = [...s]; }
+  setSelection(list, list.includes(m) ? m : list[0]);
+  anchor = point ? point.clone() : null; updateLabel();
+  if (openPanel && primary) showInfoForMesh(primary);
+  else if ($('#info').classList.contains('hidden') === false && primary) showInfoForMesh(primary);
+}
+
+// ───────── 镜头 ─────────
 function frame(list, pad = 1.6, autoDir = false) {
   const box = new THREE.Box3();
   (list && list.length ? list : null)?.forEach(m => box.expandByObject(m));
   if (box.isEmpty()) box.copy(bodyBox);
   const c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()).length();
   let dir = camera.position.clone().sub(controls.target).normalize();
-  if (autoDir) {   // 从肌肉所在的一面去看：前/后/侧
+  if (autoDir) {
     const axis = bodyBox.getCenter(new THREE.Vector3()); axis.y = c.y;
     const out = c.clone().sub(axis); out.y = 0;
     if (out.length() < 0.02) out.set(0, 0, 1);
     dir = out.normalize().add(new THREE.Vector3(0, 0.15, 0)).normalize();
   }
-  const dist = Math.max(size * pad / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))), 0.25);
+  const dist = Math.max(size * pad / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))), 0.22);
   tween(c, c.clone().add(dir.multiplyScalar(dist)));
 }
 function tween(target, pos, ms = 450) {
@@ -179,49 +255,78 @@ function tween(target, pos, ms = 450) {
 }
 function view(name) {
   const c = bodyBox.getCenter(new THREE.Vector3()), h = bodyBox.max.y - bodyBox.min.y;
-  let t = c.clone(), d = h * 1.9, dir = new THREE.Vector3(0, 0, 1);
+  let t = c.clone(), d = h * 1.95, dir = new THREE.Vector3(0, 0, 1);
   if (name === 'back') dir.set(0, 0, -1);
-  if (name === 'left') dir.set(1, 0, 0);       // 身体左侧在 +X
+  if (name === 'left') dir.set(1, 0, 0);
   if (name === 'right') dir.set(-1, 0, 0);
   if (name === 'head') { t.y = bodyBox.min.y + h * 0.88; d = h * 0.45; dir.set(0.5, 0.1, 1).normalize(); }
   if (name === 'trunk') { t.y = bodyBox.min.y + h * 0.66; d = h * 0.8; dir.set(0.35, 0.05, 1).normalize(); }
   tween(t, t.clone().add(dir.multiplyScalar(d)));
 }
+function orbitBy(dTheta, dPhi) {
+  const off = camera.position.clone().sub(controls.target), s = new THREE.Spherical().setFromVector3(off);
+  s.theta += dTheta; s.phi = THREE.MathUtils.clamp(s.phi + dPhi, 0.05, Math.PI - 0.05);
+  camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(s)); controls.update(); requestRender();
+}
+function panBy(dx, dy) {
+  const dist = camera.position.distanceTo(controls.target), right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+  const v = right.multiplyScalar(dx * dist).add(up.multiplyScalar(dy * dist));
+  camera.position.add(v); controls.target.add(v); controls.update(); requestRender();
+}
+function zoomBy(f) {
+  const off = camera.position.clone().sub(controls.target).multiplyScalar(f);
+  if (off.length() < 0.05) return;
+  camera.position.copy(controls.target).add(off); controls.update(); requestRender();
+}
+function centerOn(point, zoom = 1) {
+  const offset = camera.position.clone().sub(controls.target).multiplyScalar(zoom);
+  tween(point.clone(), point.clone().add(offset), 380);
+}
 
-// ───────── picking ─────────
+// ───────── 拾取 ─────────
 const ray = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
+let lastHit = null;
 function pick(ev) {
   const r = canvas.getBoundingClientRect();
   ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
   camera.updateMatrixWorld(); ray.setFromCamera(ndc, camera);
-  const cand = meshes.filter(m => m.visible && sysState[m.userData.sys].visible && m.material.opacity > 0.15);
+  const cand = meshes.filter(m => m.visible && sysState[m.userData.sys].visible && m.material !== GHOST);
   const hit = ray.intersectObjects(cand, false)[0];
   lastHit = hit || null;
   return hit ? hit.object : null;
 }
-let lastHit = null;
-// 把点中的位置移到画面中心（旋转也会绕这个点进行）
-function centerOn(point) {
-  const offset = camera.position.clone().sub(controls.target);
-  tween(point.clone(), point.clone().add(offset), 350);
-}
-let downAt = null;
-canvas.addEventListener('pointerdown', e => downAt = [e.clientX, e.clientY]);
-let lastTap = { t: 0, x: 0, y: 0 };
+
+// ───────── 鼠标 / 触摸 ─────────
+let downAt = null, pressTimer = null, longPressed = false;
+let lastTap = { t: 0, x: 0, y: 0, point: null };
+canvas.addEventListener('pointerdown', e => {
+  if (drawing()) return;
+  downAt = [e.clientX, e.clientY]; longPressed = false;
+  clearTimeout(pressTimer);
+  if (e.button === 0) pressTimer = setTimeout(() => {   // 长按：飞到该结构
+    if (!downAt) return; const m = pick({ clientX: downAt[0], clientY: downAt[1] });
+    if (m) { longPressed = true; selectMesh(m, { point: lastHit.point }); frame(PREF.bothSides ? partners(m) : [m], 1.8); }
+  }, 600);
+});
+canvas.addEventListener('pointermove', e => { if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) clearTimeout(pressTimer); });
 canvas.addEventListener('pointerup', e => {
-  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+  clearTimeout(pressTimer);
+  if (drawing() || longPressed || !downAt || e.button !== 0 || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) { downAt = null; return; }
+  downAt = null;
   const now = performance.now(), dbl = now - lastTap.t < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 25;
   const firstPoint = lastTap.point;
   const m = pick(e);
   lastTap = { t: dbl ? 0 : now, x: e.clientX, y: e.clientY, point: lastHit && lastHit.point.clone() };
-  if (dbl) { const p = firstPoint || (lastHit && lastHit.point); if (p) centerOn(p); return; }   // 双击 / 双点：居中
-  if (m) { if (!selected.has(m) || primary !== m) selectMesh(m); } else { setSelection([]); closeInfo(); }
+  if (dbl) { const p = firstPoint || (lastHit && lastHit.point); if (p) centerOn(p, 0.6); return; }   // 双击：自动聚焦
+  if (!m) { if (tool === 'select') deselect(); return; }
+  if (tool === 'hide') return hideMeshes(PREF.bothSides ? partners(m) : [m]);
+  if (tool === 'fade') return fadeMeshes(PREF.bothSides ? partners(m) : [m]);
+  selectMesh(m, { add: e.ctrlKey || e.metaKey || e.shiftKey, point: lastHit.point });
 });
-addEventListener('keydown', e => { if (e.key === 'f' && !e.target.matches('input,textarea,select') && selected.size) frame([...selected]); });
 let lastMove = 0;
 canvas.addEventListener('pointermove', e => {
-  if (e.pointerType !== 'mouse' || !$('#optLabels').checked || e.buttons) { $('#tip').style.display = 'none'; return; }
+  if (e.pointerType !== 'mouse' || !$('#optLabels').checked || e.buttons || drawing()) { $('#tip').style.display = 'none'; return; }
   const now = performance.now(); if (now - lastMove < 60) return; lastMove = now;
   const m = pick(e), tip = $('#tip');
   if (!m) { tip.style.display = 'none'; return; }
@@ -231,37 +336,139 @@ canvas.addEventListener('pointermove', e => {
   tip.style.left = (e.clientX - r.left + 14) + 'px'; tip.style.top = (e.clientY - r.top + 10) + 'px'; tip.style.display = 'block';
 });
 canvas.addEventListener('pointerleave', () => $('#tip').style.display = 'none');
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-function partners(m) {
-  const u = m.userData;
-  return meshes.filter(x => x.userData.base === u.base && x.userData.sys === u.sys && (showBothSides || x === m));
+// ───────── 选中结构旁的浮动标签（名称 + 隐藏 / 淡化 / 只看它）─────────
+let anchor = null;
+const label = $('#label');
+function labelTargets() { return [...selected]; }
+function updateLabel() {
+  if (!primary || !selected.size) { label.classList.add('hidden'); return; }
+  const u = primary.userData, e = byBase[u.base], zh = zhOf(u.base), la = DEFS[u.base]?.la;
+  const n = selected.size;
+  label.innerHTML = `<div class="lb-head"><div><b>${esc(zh || u.base)}${u.side && n === 1 ? `<span class="lb-side">${SIDE[u.side]}</span>` : ''}${n > 1 ? `<span class="lb-side">等 ${n} 个</span>` : ''}</b>
+      <div class="lb-en en-txt">${esc(u.base)}${la ? ' · <i>' + esc(la) + '</i>' : ''}</div>${e && zh !== e.zh ? `<div class="lb-en">属于：${esc(e.zh)}</div>` : ''}</div>
+      <div class="lb-icons"><button data-l="speak" title="朗读名称">🔊</button><button data-l="info" title="详细信息">ⓘ</button><button data-l="close" title="取消选择">✕</button></div></div>
+    <div class="lb-acts"><button data-l="hide">隐藏</button><button data-l="fademenu">淡化 ▾</button><button data-l="iso">只看它</button></div>
+    <div class="lb-menu hidden"><button data-l="fade">淡化此结构</button><button data-l="fadeothers">淡化其他全部</button></div>`;
+  label.classList.remove('hidden'); positionLabel();
 }
-function selectMesh(m) {
-  const list = showBothSides ? partners(m) : [m];
-  setSelection(list, m);
-  showInfoForMesh(m);
+function positionLabel() {
+  if (label.classList.contains('hidden') || !primary) return;
+  let p = anchor;
+  if (!p) { const b = new THREE.Box3(); labelTargets().forEach(m => b.expandByObject(m)); p = b.getCenter(new THREE.Vector3()); }
+  const v = p.clone().project(camera), r = canvas.getBoundingClientRect();
+  if (v.z > 1) { label.style.visibility = 'hidden'; return; }
+  let x = (v.x + 1) / 2 * r.width, y = (1 - v.y) / 2 * r.height;
+  $('#labelDot').style.left = x + 'px'; $('#labelDot').style.top = y + 'px'; $('#labelDot').style.display = 'block';
+  const w = label.offsetWidth, h = label.offsetHeight;
+  let lx = x + 18, ly = y - h / 2;
+  if (lx + w > r.width - 8) lx = x - w - 18;
+  lx = Math.max(8, lx); ly = Math.max(8, Math.min(r.height - h - 8, ly));
+  label.style.left = lx + 'px'; label.style.top = ly + 'px'; label.style.visibility = 'visible';
 }
-
-// ───────── hide / isolate ─────────
-function hide(list) { list = list.filter(m => m.visible); if (!list.length) return; list.forEach(m => m.visible = false); hiddenStack.push(list); setSelection([]); closeInfo(); requestRender(); }
-function isolate(list) { const keep = new Set(list); hide(meshes.filter(m => !keep.has(m))); setSelection(list); }
-$('#btnShowAll').onclick = () => { meshes.forEach(m => m.visible = !m.userData.fascia || $('#optFascia').checked); hiddenStack.length = 0; requestRender(); };
-$('#btnUndo').onclick = () => { const l = hiddenStack.pop(); if (l) { l.forEach(m => m.visible = true); requestRender(); } };
-$('#btnGhost').onclick = e => { ghost = !ghost; e.target.classList.toggle('on', ghost); applyStyles(); };
-document.querySelectorAll('#toolbar [data-view]').forEach(b => b.onclick = () => view(b.dataset.view));
-addEventListener('keydown', e => {
-  if (e.target.matches('input,textarea,select')) return;
-  if (e.key === 'h' && selected.size) hide([...selected]);
-  if (e.key === 'Escape') { setSelection([]); closeInfo(); }
-  if (e.key === 'z' && (e.ctrlKey || e.metaKey)) $('#btnUndo').click();
+afterRender.push(positionLabel);
+const _hideDot = new MutationObserver(() => { if (label.classList.contains('hidden')) $('#labelDot').style.display = 'none'; });
+_hideDot.observe(label, { attributes: true, attributeFilter: ['class'] });
+label.addEventListener('click', ev => {
+  const a = ev.target.closest('[data-l]')?.dataset.l; if (!a) return;
+  const list = labelTargets();
+  if (a === 'close') return deselect();
+  if (a === 'info') return primary && ($('#info').classList.contains('hidden') ? showInfoForMesh(primary) : closeInfo());
+  if (a === 'speak') return speak(primary.userData.base);
+  if (a === 'hide') return hideMeshes(list);
+  if (a === 'iso') return isolate(list);
+  if (a === 'fademenu') return label.querySelector('.lb-menu').classList.toggle('hidden');
+  if (a === 'fade') return fadeMeshes(list);
+  if (a === 'fadeothers') { fadeOthers(list); updateLabel(); }
 });
+function speak(base) {
+  if (!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const zh = zhOf(base);
+  if (zh) { const u1 = new SpeechSynthesisUtterance(zh.replace(/（.*?）/g, '')); u1.lang = 'zh-CN'; speechSynthesis.speak(u1); }
+  if (showEn()) { const u2 = new SpeechSynthesisUtterance(base.replace(/[()]/g, '')); u2.lang = 'en-US'; u2.rate = 0.9; speechSynthesis.speak(u2); }
+}
 
-// ───────── info panel ─────────
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// ───────── 左侧工具栏：选择 / 隐藏 / 淡化 · 层次 · 搜索 · 绘图 · 帮助 · 撤销 / 重做 / 重置 ─────────
+function setTool(t) {
+  tool = t;
+  document.querySelectorAll('#vtools [data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+  canvas.style.cursor = t === 'hide' ? 'not-allowed' : t === 'fade' ? 'cell' : '';
+  toast({ select: '选择工具：点击结构查看名称', hide: '隐藏工具：点击结构直接隐藏', fade: '淡化工具：点击结构直接淡化' }[t]);
+}
+let toastTimer;
+function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 1800); }
+$('#vtools').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.tool) return setTool(b.dataset.tool);
+  const a = b.dataset.act;
+  if (a === 'layers') return $('#layerPop').classList.toggle('hidden');
+  if (a === 'search') return openSearch();
+  if (a === 'draw') return window.__extras?.startDraw();
+  if (a === 'help') return window.__extras?.openHelp();
+  if (a === 'undo') return undo();
+  if (a === 'redo') return redo();
+  if (a === 'reset') return resetAll();
+});
+function openSearch() { if (innerWidth <= 820) $('#side').classList.add('open'); gotoTab('search'); setTimeout(() => $('#q').focus(), 50); }
+// 层次滑块：由外向内逐层淡化（与 Innerbody 的 Anatomy Layers 相同）
+const LAYER_NAMES = ['全部显示', '淡化浅层肌', '淡化至第 2 层', '淡化至第 3 层', '淡化至第 4 层', '淡化至最深层肌', '淡化全部肌肉', '再淡化骨骼'];
+function setLayerLevel(v) { layerLevel = v; $('#layerRange').value = 7 - v; $('#layerName').textContent = LAYER_NAMES[v]; applyStyles(); }
+$('#layerRange').addEventListener('input', e => setLayerLevel(7 - +e.target.value));
+// 右下角导航
+$('#nav').addEventListener('click', e => {
+  const a = e.target.closest('button')?.dataset.nav; if (!a) return;
+  if (a === 'toggle') return $('#nav').classList.toggle('open');
+  if (a === 'home') return view('front');
+  if (a === 'pan') { panMode = !panMode; applyControlMode(); return toast(panMode ? '平移模式：拖动画面即可平移' : '旋转模式：拖动画面即可旋转'); }
+  if (a === 'in') return zoomBy(0.8);
+  if (a === 'out') return zoomBy(1.25);
+  if (a === 'full') return toggleFull();
+});
+function toggleFull() { const el = document.documentElement; if (!document.fullscreenElement) el.requestFullscreen?.(); else document.exitFullscreen?.(); }
+document.querySelectorAll('#toolbar [data-view]').forEach(b => b.onclick = () => view(b.dataset.view));
+
+// ───────── 快捷键（与 Innerbody / BioDigital 相同）─────────
+addEventListener('keydown', e => {
+  if (e.target.matches('input,textarea,select') || document.querySelector('dialog[open]') || drawing()) return;
+  const k = e.key, slow = e.shiftKey ? 0.25 : 1, mod = e.ctrlKey || e.metaKey;
+  if (mod && k.toLowerCase() === 'z') { e.preventDefault(); return e.shiftKey ? redo() : undo(); }
+  if (mod && k.toLowerCase() === 'y') { e.preventDefault(); return redo(); }
+  if (mod && k === 'Enter') return toggleFull();
+  if (mod) return;
+  if (k === 'ArrowLeft') { e.preventDefault(); return orbitBy(0.12 * slow, 0); }
+  if (k === 'ArrowRight') { e.preventDefault(); return orbitBy(-0.12 * slow, 0); }
+  if (k === 'ArrowUp') { e.preventDefault(); return orbitBy(0, -0.1 * slow); }
+  if (k === 'ArrowDown') { e.preventDefault(); return orbitBy(0, 0.1 * slow); }
+  const lk = k.toLowerCase();
+  if (e.shiftKey && lk === 'h') return selected.size && hideMeshes([...selected]);
+  if (e.shiftKey && lk === 'f') return selected.size && fadeMeshes([...selected]);
+  if (e.shiftKey && lk === 'i') return selected.size && isolate([...selected]);
+  if (e.shiftKey && lk === 'r') return resetAll();
+  if (k === '?') return window.__extras?.openHelp();
+  if (lk === 'w') return panBy(0, 0.05 * slow);
+  if (lk === 's') return panBy(0, -0.05 * slow);
+  if (lk === 'a') return panBy(-0.05 * slow, 0);
+  if (lk === 'd') return panBy(0.05 * slow, 0);
+  if (lk === 'e' || k === '=' || k === '+') return zoomBy(e.shiftKey ? 0.95 : 0.85);
+  if (lk === 'c' || k === '-' || k === '_') return zoomBy(e.shiftKey ? 1.05 : 1.18);
+  if (k === 'Delete' || k === 'Backspace') return selected.size && hideMeshes([...selected]);
+  if (lk === 'h') return selected.size && hideMeshes([...selected]);
+  if (lk === 'f') return selected.size && frame([...selected]);
+  if (lk === 'p') return $('#nav [data-nav=pan]').click();
+  if (k === '1') return setTool('select');
+  if (k === '2') return setTool('hide');
+  if (k === '3') return setTool('fade');
+  if (k === '/') { e.preventDefault(); return openSearch(); }
+  if (k === 'Escape') { $('#layerPop').classList.add('hidden'); return deselect(); }
+});
+const drawing = () => document.body.classList.contains('drawing');
+
+// ───────── 信息面板 ─────────
 function closeInfo() { $('#info').classList.add('hidden'); requestAnimationFrame(resize); }
-$('#infoClose').onclick = () => { setSelection([]); closeInfo(); };
+$('#infoClose').onclick = () => closeInfo();
 function openInfo(html) { $('#infoBody').innerHTML = html; $('#info').classList.remove('hidden'); $('#info').scrollTop = 0; requestAnimationFrame(resize); }
-
 function entryHTML(e) {
   return `
    <h3>确认动作</h3>${entryTestsHTML(e)}
@@ -292,14 +499,13 @@ async function highlightBases(prim, sec) {
   await loadSystem('muscular'); setSysVisible('muscular', true);
   const P = meshes.filter(m => m.userData.sys === 'muscular' && prim.includes(m.userData.base));
   const S = meshes.filter(m => m.userData.sys === 'muscular' && sec.includes(m.userData.base));
-  [...P, ...S].forEach(m => m.visible = true);
-  ghost = true; $('#btnGhost').classList.add('on');
+  showMeshes([...P, ...S].filter(m => m.userData.state !== 'v'));
   setSelection(P, P[0], S); frame([...P, ...S], 1.5, true);
 }
 async function selectBase(base) {
   await loadSystem('muscular'); setSysVisible('muscular', true);
   const m = meshes.find(x => x.userData.sys === 'muscular' && x.userData.base === base);
-  if (m) { m.visible = true; selectMesh(m); frame([...selected], 2.2, true); }
+  if (m) { if (m.userData.state !== 'v') showMeshes([m]); selectMesh(m, { openPanel: true }); frame([...selected], 2.2, true); }
 }
 function showInfoForMesh(m, whole = false) {
   curWhole = whole; curInfo = null;
@@ -312,20 +518,16 @@ function showInfoForMesh(m, whole = false) {
     ${e && e.bases.length > 1 ? `<div class="en">所选部分：${esc(zh && zh !== e.zh ? zh : u.base)}</div>` : ''}
     <div class="crumb">${esc(crumb)}</div>
     <div class="acts">
-      <button data-a="focus">聚焦</button><button data-a="hide">隐藏</button><button data-a="iso">只看它</button>
-      <button data-a="hideGroup">隐藏同组</button>${e ? '<button data-a="all">高亮整块肌肉</button>' : ''}
+      <button data-a="focus">聚焦</button><button data-a="hideGroup">隐藏同组</button>${e ? '<button data-a="all">高亮整块肌肉</button>' : ''}
       <button data-a="log" class="primary">记录不适</button>
     </div>
     ${e ? entryHTML(e) : (u.sys === 'muscular' ? '<p class="hint">该结构暂无确认动作数据（第一版覆盖头颈与躯干的重点肌肉）。</p>' : '')}
     ${u.sys === 'muscular' ? exercisesForBase(u.base) : ''}
     ${defHTML(u.base)}`);
-  const acts = $('#infoBody .acts');
-  acts.onclick = ev => {
+  $('#infoBody .acts').onclick = ev => {
     const a = ev.target.dataset.a; if (!a) return;
     if (a === 'focus') frame([...selected]);
-    if (a === 'hide') hide([...selected]);
-    if (a === 'iso') { isolate([...selected]); frame([...selected]); }
-    if (a === 'hideGroup') { const g = u.groups[u.groups.length - 1]; hide(meshes.filter(x => x.userData.sys === u.sys && x.userData.groups[x.userData.groups.length - 1] === g)); }
+    if (a === 'hideGroup') { const g = u.groups[u.groups.length - 1]; hideMeshes(meshes.filter(x => x.userData.sys === u.sys && x.userData.groups[x.userData.groups.length - 1] === g)); }
     if (a === 'all') selectEntry(e, false);
     if (a === 'log') openLog({ muscle: e ? e.id : u.base, side: u.side === 'l' ? 'left' : u.side === 'r' ? 'right' : 'mid' });
   };
@@ -333,32 +535,39 @@ function showInfoForMesh(m, whole = false) {
 async function selectEntry(e, doFrame = true) {
   await loadSystem('muscular'); setSysVisible('muscular', true);
   const list = meshes.filter(m => m.userData.sys === 'muscular' && e.bases.includes(m.userData.base));
-  list.forEach(m => m.visible = true);
-  ghost = true; $('#btnGhost').classList.add('on');
+  showMeshes(list.filter(m => m.userData.state !== 'v'));
   setSelection(list, list[0]);
   if (list[0]) showInfoForMesh(list[0], true);
   if (doFrame) frame(list, 2.2, true);
   document.querySelectorAll('#focusList .item').forEach(b => b.classList.toggle('sel', b.dataset.id === e.id));
 }
 
-// ───────── layers pane ─────────
+// ───────── 图层面板 ─────────
 function setSysVisible(k, v) {
   const st = sysState[k]; st.visible = v; st.group.visible = v;
   const cb = document.querySelector(`#layerList input[data-k="${k}"]`); if (cb) cb.checked = v;
-  if (v) loadSystem(k); requestRender();
+  if (v) loadSystem(k); requestRender(); window.dispatchEvent(new Event('styles-changed'));
 }
 function buildLayers() {
   $('#layerList').innerHTML = SYSTEMS.map(s => `
     <div class="layer"><input type="checkbox" data-k="${s.key}" ${s.on ? 'checked' : ''}>
       <span class="sw" style="background:#${s.color.toString(16).padStart(6, '0')}"></span>
       <span>${s.zh}<small class="en-txt">${s.en}</small></span>
-      <input type="range" min="0.05" max="1" step="0.05" value="1" data-op="${s.key}" title="不透明度"></div>`).join('');
+      <span class="lyr-btns"><button type="button" data-fade="${s.key}" title="淡化整个系统">淡化</button><button type="button" data-solo="${s.key}" title="只看这个系统">只看</button></span></div>`).join('');
   $('#layerList').onchange = e => { if (e.target.dataset.k) setSysVisible(e.target.dataset.k, e.target.checked); };
-  $('#layerList').oninput = e => { const k = e.target.dataset.op; if (k) { sysState[k].opacity = +e.target.value; applyStyles(); } };
+  $('#layerList').onclick = async e => {
+    const f = e.target.dataset.fade, s = e.target.dataset.solo;
+    if (f) { await loadSystem(f); setSysVisible(f, true); const list = meshes.filter(m => m.userData.sys === f); const allF = list.every(m => m.userData.state === 'f'); commit(list.map(m => [m, allF ? 'v' : 'f'])); }
+    if (s) { await loadSystem(s); SYSTEMS.forEach(x => setSysVisible(x.key, x.key === s)); }
+  };
   $('#optEn').checked = showEn();
   $('#optEn').onchange = e => applyEnPref(e.target.checked);
-  $('#optFascia').onchange = e => { meshes.forEach(m => { if (m.userData.fascia) m.visible = e.target.checked; }); requestRender(); };
-  $('#optSides').onchange = e => showBothSides = e.target.checked;
+  $('#optFascia').onchange = () => applyStyles();
+  $('#optSides').checked = PREF.bothSides; $('#optSides').onchange = e => { PREF.bothSides = e.target.checked; savePref(); };
+  $('#optAutoInfo').checked = PREF.autoInfo; $('#optAutoInfo').onchange = e => { PREF.autoInfo = e.target.checked; savePref(); };
+  $('#optAO').checked = PREF.ao; $('#optAO').onchange = e => { PREF.ao = e.target.checked; savePref(); requestRender(); };
+  $('#optHD').checked = PREF.hd; $('#optHD').onchange = e => { PREF.hd = e.target.checked; savePref(); toast('刷新页面后生效'); };
+  $('#optBg').value = PREF.bg; $('#optBg').onchange = e => { PREF.bg = e.target.value; savePref(); applyBg(); };
   $('#optColor').onchange = e => { const v = e.target.value; heatMap = v === 'pain' ? computeHeat() : null; volMap = v === 'volume' ? volumeByBase(7) : null; applyStyles(); };
 }
 
@@ -369,33 +578,6 @@ function buildFocus() {
     `<button class="item" data-id="${m.id}"><span class="dot" style="background:${REGION_COLOR[r]}"></span>${esc(m.zh)}<small class="en-txt">${esc(m.en)}</small></button>`).join('')}</div>`).join('');
   $('#focusList').onclick = e => { const b = e.target.closest('.item'); if (b) { selectEntry(MUSCLES.find(m => m.id === b.dataset.id)); closeSideMobile(); } };
   $('#redFlags').innerHTML = window.RED_FLAGS.map(t => `<li>${esc(t)}</li>`).join('');
-}
-
-// ───────── search pane ─────────
-let SEARCH = [];
-function buildSearch() {
-  const seen = new Set();
-  for (const k in INDEX) for (const n in INDEX[k]) {
-    const b = INDEX[k][n][0], id = k + '|' + b; if (seen.has(id)) continue; seen.add(id);
-    const zh = zhOf(b);
-    SEARCH.push({ k, b, zh, text: (b + ' ' + zh + ' ' + (DEFS[b]?.la || '')).toLowerCase() });
-  }
-  MUSCLES.forEach(m => SEARCH.push({ entry: m, zh: m.zh, b: m.en, k: 'muscular', text: (m.zh + ' ' + m.en).toLowerCase() }));
-  $('#q').oninput = () => {
-    const q = $('#q').value.trim().toLowerCase();
-    if (!q) { $('#results').innerHTML = ''; return; }
-    const res = SEARCH.filter(s => s.text.includes(q)).sort((a, b) => (b.entry ? 1 : 0) - (a.entry ? 1 : 0)).slice(0, 80);
-    $('#results').innerHTML = res.map((s, i) => `<button class="item" data-i="${i}">${s.entry ? '★ ' : ''}${esc(s.zh || s.b)}<small>${s.zh ? `<span class="en-txt">${esc(s.b)} · </span>` : ''}${SYS[s.k].zh}</small></button>`).join('') || '<p class="hint">没有找到</p>';
-    $('#results').onclick = async e => {
-      const b = e.target.closest('.item'); if (!b) return; const s = res[+b.dataset.i];
-      closeSideMobile();
-      if (s.entry) return selectEntry(s.entry);
-      await loadSystem(s.k); setSysVisible(s.k, true);
-      const list = meshes.filter(m => m.userData.sys === s.k && m.userData.base === s.b);
-      list.forEach(m => m.visible = true);
-      if (list.length) { setSelection(list, list[0]); showInfoForMesh(list[0]); frame(list, 2.4, true); }
-    };
-  };
 }
 
 // ───────── logs ─────────
@@ -507,23 +689,25 @@ function gotoTab(t) {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + t));
   if (t === 'train') renderTraining();
+  if (t === 'search') window.__extras?.renderBrowser();
 }
 $('#tabs').onclick = e => {
   const t = e.target.dataset.tab; if (!t) return;
   if (t === 'train') renderTraining();
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + t));
-  if (t === 'search') $('#q').focus();
+  if (t === 'search') { window.__extras?.renderBrowser(); $('#q').focus(); }
 };
 $('#menuBtn').onclick = () => $('#side').classList.toggle('open');
 function closeSideMobile() { if (innerWidth <= 820) $('#side').classList.remove('open'); }
 
-window.__dbg = { meshes, THREE, camera, controls, pick: (x, y) => pick({ clientX: x, clientY: y })?.userData.name, ready: () => !pending && sysState.muscular?.loaded && sysState.skeletal?.loaded };
+window.__dbg = { PREF, requestRender, composer, gtao, meshes, THREE, camera, controls, renderer, scene, sysState, loadSystem, commit, undo, redo, resetAll, setLayerLevel, get selected() { return selected; }, pick: (x, y) => pick({ clientX: x, clientY: y })?.userData.name, ready: () => !pending && sysState.muscular?.loaded && sysState.skeletal?.loaded };
 // ───────── boot ─────────
 (async function boot() {
-  [INDEX, DEFS] = await Promise.all([fetch('data/index.json').then(r => r.json()), fetch('data/definitions.json').then(r => r.json())]);
-  for (const s of SYSTEMS) { const g = new THREE.Group(); g.visible = !!s.on; scene.add(g); sysState[s.key] = { group: g, loaded: false, visible: !!s.on, opacity: 1 }; }
-  buildLayers(); buildFocus(); buildSearch(); await loadLogs(); await loadCustom(serverMode); renderLogs();
+  [INDEX, DEFS, LAYERS] = await Promise.all(['index', 'definitions', 'layers'].map(n => fetch(`data/${n}.json`).then(r => r.json()).catch(() => ({}))));
+  for (const s of SYSTEMS) { const g = new THREE.Group(); g.visible = !!s.on; scene.add(g); sysState[s.key] = { group: g, loaded: false, visible: !!s.on }; }
+  applyBg();
+  buildLayers(); buildFocus(); await loadLogs(); await loadCustom(serverMode); renderLogs();
   initTestsUI({ isServer: () => serverMode, saveLog, MUSCLES, onChange: refreshInfo });
   await loadWorkouts(serverMode);
   initFitness({
@@ -533,9 +717,13 @@ window.__dbg = { meshes, THREE, camera, controls, pick: (x, y) => pick({ clientX
     gotoTab, onVolumeChange: () => { if (volMap) { volMap = volumeByBase(7); applyStyles(); } },
   });
   bindInfoEvents($('#infoBody'));
+  initExtras({ SYSTEMS, SYS, INDEX, DEFS, MUSCLES, meshes, sysState, zhOf, loadSystem, setSysVisible, commit, isolate, fadeOthers, setSelection, frame,
+    showInfoForMesh, selectEntry, closeSideMobile, PREF, controls, renderer, renderNow, toast });
+  setLayerLevel(0); updateHistoryButtons();
   resize(); view('front');
   await Promise.all(SYSTEMS.filter(s => s.on).map(s => loadSystem(s.key)));
   const box = new THREE.Box3(); sysState.skeletal.group.traverse(o => o.isMesh && box.expandByObject(o));
   if (!box.isEmpty()) bodyBox = box;
-  camera.near = 0.01; camera.far = 50; view('front');
+  view('front');
+  if (!localStorage.getItem('helpSeen')) { try { localStorage.setItem('helpSeen', '1'); } catch {} setTimeout(() => window.__extras.openHelp(), 600); }
 })();

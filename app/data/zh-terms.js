@@ -25,3 +25,38 @@ window.ZH_TERMS = {
  "Heart":"心脏","Brain":"脑","Spinal cord":"脊髓","Liver":"肝","Stomach":"胃","Spleen":"脾","Pancreas":"胰","Oesophagus":"食管","Trachea":"气管","Larynx":"喉","Thyroid gland":"甲状腺","Right lung":"右肺","Left lung":"左肺","Kidney":"肾","Urinary bladder":"膀胱","Small intestine":"小肠","Large intestine":"大肠",
  "Aorta":"主动脉","Phrenic nerve":"膈神经","Vagus nerve":"迷走神经","Accessory nerve":"副神经","Brachial plexus":"臂丛","Sciatic nerve":"坐骨神经"
 };
+// 分组名称（结构浏览树中使用）
+Object.assign(window.ZH_TERMS, {
+ "Acromioclavicular joint":"肩锁关节","Adductor hallucis":"拇收肌（足）","Adductor magnus":"大收肌","Ankle joint":"踝关节","Antebrachial fascia":"前臂筋膜",
+ "Anterior compartment of arm":"上臂前群","Anterior compartment of forearm":"前臂前群","Anterior compartment of leg":"小腿前群","Anterior compartment of thigh":"大腿前群",
+ "Anterior tarsal tendon sheaths":"踝前腱鞘","Anterior teeth":"前牙","Auditory ossicles":"听小骨","Biceps brachii muscle":"肱二头肌","Bones of cranium":"脑颅骨","Bones of foot":"足骨",
+ "Bones of free part of lower limb":"自由下肢骨","Bones of free part of upper limb":"自由上肢骨","Bones of lower limb":"下肢骨","Bones of pectoral girdle":"肩带骨","Bones of pelvic girdle":"骨盆带骨",
+ "Bones of thorax":"胸廓骨","Bones of upper limb":"上肢骨","Bursae of lower limb":"下肢滑囊","Bursae of upper limb":"上肢滑囊","Carpal tendon sheaths":"腕部腱鞘","Carpometacarpal joints":"腕掌关节",
+ "Cartilaginous joints of pelvic girdle":"骨盆带软骨连结","Cartilaginous joints of vertebral column":"脊柱软骨连结","Cervical fasciae":"颈筋膜","Cervical vertebrae":"颈椎","Costal cartilages":"肋软骨",
+ "Costotransverse joint":"肋横突关节","Costovertebral joints":"肋椎关节","Cranial fibrous joints":"颅骨纤维连结","Cranial syndesmoses":"颅骨韧带连结","Cranium":"颅","Crico-arytenoid joint":"环杓关节",
+ "Deep gluteal muscles":"臀深层肌","Deep part of anterior compartment of forearm":"前臂前群深层","Deep part of posterior compartment of forearm":"前臂后群深层","Deep part of posterior compartment of leg":"小腿后群深层",
+ "Digastric muscle":"二腹肌","Distal radio-ulnar joint":"桡尺远侧关节","Dorsal carpal tendon sheaths":"腕背侧腱鞘","Dorsal intercarpal ligaments":"腕骨间背侧韧带","Elbow joint":"肘关节",
+ "Endo-abdominal fascia":"腹内筋膜","Epicranius muscle":"颅顶肌","Ethmoid bone":"筛骨","Extensor digitorum longus":"趾长伸肌","Extracranial bones of head":"面颅骨","Facial muscles":"面肌",
+ "False ribs":"假肋","Fasciae of abdomen":"腹部筋膜","Fasciae of head":"头部筋膜","Fasciae of lower limb":"下肢筋膜","Fasciae of thorax":"胸部筋膜","Fasciae of upper limb":"上肢筋膜",
+ "Fibro-elastic membrane of larynx":"喉弹性膜","Fibrous joints of free lower limb":"自由下肢纤维连结","Fibrous joints of free upper limb":"自由上肢纤维连结","Fibrous joints of larynx":"喉纤维连结",
+ "Fibrous joints of pectoral girdle":"肩带纤维连结","Fibrous joints of pelvic girdle":"骨盆带纤维连结","Fibrous joints of thorax":"胸廓纤维连结","Fibrous joints of vertebral column":"脊柱纤维连结",
+ "Fibular tarsal tendon sheaths":"踝外侧腱鞘","Flexor hallucis brevis":"拇短屈肌（足）","Floating ribs":"浮肋","Glenohumeral joint":"肩关节（盂肱关节）","Hip joint":"髋关节","Iliocostalis muscles":"髂肋肌",
+ "Iliopsoas muscle":"髂腰肌","Intercarpal joints":"腕骨间关节","Intermetacarpal joints":"掌骨间关节","Intermetatarsal joints":"跖骨间关节","Interphalangeal joints of foot":"足趾间关节",
+ "Interphalangeal joints of hand":"手指间关节","Interspinales muscles":"棘间肌","Intertarsal joints":"跗骨间关节","Intervertebral symphysis":"椎间盘连结","Joint of head of rib":"肋头关节",
+ "Joints of foot":"足关节","Joints of free lower limb":"自由下肢关节","Joints of free upper limb":"自由上肢关节","Joints of hand":"手关节","Joints of lower limb":"下肢关节","Joints of pectoral girdle":"肩带关节",
+ "Joints of pelvic girdle":"骨盆带关节","Joints of skull":"颅骨连结","Joints of upper limb":"上肢关节","Joints of vertebral column":"脊柱连结","Knee joint":"膝关节","Laryngeal cartilages":"喉软骨",
+ "Laryngeal joints":"喉关节","Lateral collateral ligament of ankle":"踝外侧副韧带","Lateral compartment of leg":"小腿外侧群","Levator ani":"肛提肌","Levatores costarum":"肋提肌","Longissimus muscles":"最长肌",
+ "Lumbar vertebrae":"腰椎","Medial collateral ligament of ankle":"踝内侧副韧带","Medial compartment of thigh":"大腿内侧群","Metacarpophalangeal joints":"掌指关节","Metatarsal bones":"跖骨",
+ "Metatarsophalangeal joints":"跖趾关节","Multifidus muscles":"多裂肌","Muscles of foot":"足肌","Muscles of hand":"手肌","Muscles of pelvis":"盆部肌","Muscles of soft palate":"软腭肌","Muscles of tongue":"舌肌",
+ "Muscular system of lower limb":"下肢肌","Muscular system of upper limb":"上肢肌","Nasal cartilages":"鼻软骨","Palmar carpal tendon sheaths":"腕掌侧腱鞘","Pelvic diaphragm":"盆膈",
+ "Pelvic part of muscular system":"盆部","Perineal muscles":"会阴肌","Phalanges of foot":"趾骨","Pharyngeal muscles":"咽肌","Posterior compartment of arm":"上臂后群","Posterior compartment of forearm":"前臂后群",
+ "Posterior compartment of leg":"小腿后群","Posterior compartment of thigh":"大腿后群","Posterior teeth":"后牙","Pubic symphysis":"耻骨联合","Radio-ulnar syndesmoses":"桡尺韧带连结","Radiocarpal joint":"桡腕关节",
+ "Ribs":"肋骨","Rotator cuff muscles":"肩袖肌群","Sacro-iliac joint":"骶髂关节","Scapulohumeral muscles":"肩胛肱骨肌群","Semispinalis muscles":"半棘肌","Spinalis muscles":"棘肌","Spinotransversales muscles":"棘横肌（夹肌群）",
+ "Splenius muscles":"夹肌","Sternoclavicular joint":"胸锁关节","Suboccipital muscles":"枕下肌群","Superficial gluteal muscles":"臀浅层肌","Superficial muscles of head":"头部浅层肌",
+ "Superficial part of anterior compartment of forearm":"前臂前群浅层","Superficial part of posterior compartment of forearm":"前臂后群浅层","Superficial part of posterior compartment of leg":"小腿后群浅层",
+ "Superior tibiofibular joint":"胫腓近侧关节","Synovial joints of free lower limb":"自由下肢滑膜关节","Synovial joints of free upper limb":"自由上肢滑膜关节","Synovial joints of larynx":"喉滑膜关节",
+ "Synovial joints of pectoral girdle":"肩带滑膜关节","Synovial joints of pelvic girdle":"骨盆带滑膜关节","Synovial joints of thorax":"胸廓滑膜关节","Tarsal bones":"跗骨","Tarsometatarsal joints":"跗跖关节",
+ "Teeth":"牙","Temporomandibular joint":"颞下颌关节","Tendon sheaths of digits of hand":"手指腱鞘","Tendon sheaths of lower limb":"下肢腱鞘","Tendon sheaths of upper limb":"上肢腱鞘","Tensor fasciae latae":"阔筋膜张肌",
+ "Thoracic joints":"胸廓关节","Thoracic skeleton":"胸廓骨骼","Thoracic vertebrae":"胸椎","Thyrohyoid membrane":"甲状舌骨膜","Tibial tarsal tendon sheaths":"踝内侧腱鞘","Tibiofibular syndesmosis":"胫腓韧带连结",
+ "Transversospinal muscles":"横突棘肌","Triceps brachii muscle":"肱三头肌","True ribs":"真肋","Vertebral column":"脊柱","Thoracolumbar fascia":"胸腰筋膜","Cranial part of muscular system":"头部"
+});

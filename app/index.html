@@ -26,13 +26,20 @@
       <div class="group">
         <label class="chk"><input type="checkbox" id="optEn" checked> 显示英文名 / 拉丁名</label>
         <label class="chk"><input type="checkbox" id="optFascia"> 显示筋膜（包在肌肉外的膜）</label>
-        <label class="chk"><input type="checkbox" id="optSides" checked> 显示左右两侧</label>
+        <label class="chk"><input type="checkbox" id="optSides"> 点击时同时选中左右两侧</label>
+        <label class="chk"><input type="checkbox" id="optAutoInfo"> 选中时自动打开详情面板</label>
         <label class="chk">肌肉着色 <select id="optColor"><option value="">原色</option><option value="pain">近 30 天不适程度</option><option value="volume">近 7 天训练量</option></select></label>
         <label class="chk"><input type="checkbox" id="optLabels" checked> 鼠标悬停显示名称</label>
       </div>
+      <h4 class="sec">画面</h4>
+      <div class="group">
+        <label class="chk">背景 <select id="optBg"><option value="light">浅色（同 Innerbody）</option><option value="dark">深色</option></select></label>
+        <label class="chk"><input type="checkbox" id="optAO"> 环境光遮蔽（实验功能，更有立体感，较耗性能）</label>
+        <label class="chk"><input type="checkbox" id="optHD"> 高精度模型（刷新后生效）</label>
+      </div>
       <div class="help"><b>操作方法</b>
-        <div class="desk">左键拖动：旋转<br>右键 / 中键拖动（或按住 Shift + 左键）：平移画面<br>滚轮：朝鼠标所指位置缩放<br><b>双击</b>某处：把它移到画面中心，之后绕它旋转<br>单击：选中结构 · F：聚焦选中 · H：隐藏选中</div>
-        <div class="touch">单指拖动：旋转<br>双指拖动：平移画面 · 双指捏合：缩放<br><b>双击</b>某处：移到画面中心<br>单击：选中结构</div></div>
+        <div class="desk">左键拖动：旋转 · 右键拖动 / Shift+左键：平移 · 滚轮：缩放<br><b>单击</b>选中（Ctrl/Shift 多选）· <b>双击</b>自动聚焦 · <b>长按</b>飞到结构<br>左侧工具栏：选择 / 隐藏 / 淡化工具、层次、搜索、绘图、撤销 / 重做 / 重置<br>按 <b>Shift + /</b> 查看全部快捷键</div>
+        <div class="touch">单指：旋转 · 双指：平移 / 缩放<br>单击选中 · 双击聚焦 · 长按飞到结构<br>左侧工具栏：隐藏 / 淡化工具、层次、搜索、绘图、撤销、重置</div></div>
     </section>
     <section class="pane" id="pane-focus">
       <p class="hint">头颈与躯干重点肌肉。点击查看确认动作并在模型中高亮。</p>
@@ -40,7 +47,9 @@
       <details class="redflags"><summary>⚠ 需要就医的信号</summary><ul id="redFlags"></ul></details>
     </section>
     <section class="pane" id="pane-search">
-      <input id="q" type="search" placeholder="输入中文或英文，如：斜方肌 / trapezius / rib" autocomplete="off">
+      <input id="q" type="search" placeholder="搜索结构：中文 / 英文 / 拉丁名" autocomplete="off">
+      <div class="row small bctl"><button type="button" id="bMode">树状</button><button type="button" id="bExpand" title="展开 / 折叠">展开/折叠</button>
+        <select id="bFilter"><option value="all">全部结构</option><option value="visible">可见的</option><option value="hidden">已隐藏的</option></select></div>
       <div id="results"></div>
     </section>
     <section class="pane" id="pane-train">
@@ -72,10 +81,42 @@
       <button data-view="front" title="正面">前</button><button data-view="back" title="背面">后</button>
       <button data-view="left" title="左侧（身体左侧）">左</button><button data-view="right" title="右侧（身体右侧）">右</button>
       <button data-view="head" title="头颈特写">头颈</button><button data-view="trunk" title="躯干特写">躯干</button>
-      <span class="sep"></span>
-      <button id="btnShowAll" title="显示所有被隐藏的结构">全部显示</button>
-      <button id="btnUndo" title="撤销上一次隐藏">撤销</button>
-      <button id="btnGhost" title="其他结构半透明">透视</button>
+    </div>
+    <div id="vtools">
+      <div class="vgroup">
+        <button data-tool="select" class="on" title="选择工具（1）">➤</button>
+        <button data-tool="hide" title="隐藏工具（2）：点击即隐藏">⊘</button>
+        <button data-tool="fade" title="淡化工具（3）：点击即淡化">◌</button>
+      </div>
+      <div class="vgroup">
+        <button data-act="layers" title="层次：由外向内逐层淡化">☰</button>
+        <button data-act="search" title="搜索结构（/）">⌕</button>
+        <button data-act="draw" title="绘图标注">✎</button>
+        <button data-act="help" title="帮助（Shift+/）">?</button>
+      </div>
+      <div class="vgroup">
+        <button id="tUndo" data-act="undo" title="撤销（Ctrl+Z）">↶</button>
+        <button id="tRedo" data-act="redo" title="重做（Ctrl+Y）">↷</button>
+        <button data-act="reset" title="重置（Shift+R）">⟲</button>
+      </div>
+    </div>
+    <div id="layerPop" class="hidden"><div class="lp-title">层次</div><input type="range" id="layerRange" min="0" max="7" step="1" value="7"><div id="layerName">全部显示</div><small>由外向内逐层淡化</small></div>
+    <div id="nav">
+      <button data-nav="toggle" class="nav-toggle" title="更多">⌃</button>
+      <button data-nav="home" title="回到初始位置">⌖</button>
+      <button data-nav="pan" id="navPan" title="切换平移 / 旋转模式（P）">✥</button>
+      <button data-nav="in" title="放大">＋</button>
+      <button data-nav="out" title="缩小">－</button>
+      <button data-nav="full" title="全屏（Ctrl+Enter）">⛶</button>
+    </div>
+    <div id="labelDot"></div>
+    <div id="label" class="hidden"></div>
+    <div id="toast"></div>
+    <canvas id="drawCanvas"></canvas>
+    <div id="drawBar">
+      <button data-dt="pen" class="on" title="画笔">✎ 画笔</button><button data-dt="text" title="文字">T 文字</button>
+      <input type="color" id="dColor" value="#ff3b30" title="颜色"><input type="range" id="dSize" min="1" max="12" value="4" title="粗细">
+      <button data-da="clear">清除</button><button data-da="copy">复制</button><button data-da="save">下载截图</button><button data-da="exit" class="primary">退出绘图</button>
     </div>
     <div id="loading">正在加载模型…</div>
     <button id="menuBtn" aria-label="菜单">☰</button>
@@ -105,6 +146,11 @@
     <input type="hidden" name="id">
     <div class="row end"><button value="cancel" formnovalidate>取消</button><button id="logDelete" type="button" class="danger">删除</button><button value="ok" class="primary">保存</button></div>
   </form>
+</dialog>
+
+<dialog id="helpDlg" class="helpdlg">
+  <div class="htabs"><button data-ht="basic" class="on">基本操作</button><button data-ht="all">全部功能</button><button data-ht="keys">快捷键</button><span style="flex:1"></span><form method="dialog"><button>关闭</button></form></div>
+  <div id="helpBody"></div>
 </dialog>
 
 <dialog id="mediaDlg">
