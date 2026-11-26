@@ -109,6 +109,15 @@
       <button data-nav="out" title="缩小">－</button>
       <button data-nav="full" title="全屏（Ctrl+Enter）">⛶</button>
     </div>
+    <div id="animBar" class="hidden">
+      <b id="apName"></b>
+      <button data-ap="play" id="apPlay" title="播放 / 暂停">▶</button>
+      <input type="range" id="apProg" min="0" max="1000" value="0" title="拖动查看任意时刻">
+      <button data-ap="speed" title="速度">1×</button>
+      <button data-ap="side" title="哪一侧做动作">右侧</button>
+      <button data-ap="stop" class="primary" title="退出动画">退出</button>
+      <div id="apPhase"></div>
+    </div>
     <div id="labelDot"></div>
     <div id="label" class="hidden"></div>
     <div id="toast"></div>

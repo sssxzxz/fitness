@@ -11,6 +11,7 @@ import { makeMaterial, GHOST, setupLighting, PIX } from './materials.js';
 import { initTestsUI, loadCustom, entryTestsHTML, bindInfoEvents, resultsText, customHTML } from './tests-ui.js';
 import { initFitness, loadWorkouts, careHTML, exercisesForBase, volumeByBase, renderTraining } from './fitness.js';
 import { initExtras } from './extras.js';
+import { initAnim, play as playAnim, stop as stopAnim, hasAnim, refreshBounds } from './anim.js';
 
 const $ = s => document.querySelector(s);
 const MUSCLES = window.MUSCLES, ZH = { ...window.ZH_TERMS, ...(window.ZH_NAMES || {}) };
@@ -77,6 +78,12 @@ composer.addPass(gtao);
 composer.addPass(new OutputPass());
 
 const HL = new THREE.Color(0x14b8d4), SEC = new THREE.Color(0xff8a00), BLACK = new THREE.Color(0);
+const PHASE_COLOR = { con: 0xff2a1a, iso: 0xb026d9, ecc: 0x1fbf5a };
+function setPhase(kind, text) {
+  HL.set(kind ? PHASE_COLOR[kind] : 0x14b8d4);
+  const el = document.getElementById('apPhase'); if (el) { el.textContent = text || ''; el.dataset.k = kind || ''; }
+  selected.forEach(m => { if (m.material !== GHOST) m.material.emissive.copy(HL); });
+}
 let bodyBox = new THREE.Box3(new THREE.Vector3(-0.3, 0, -0.15), new THREE.Vector3(0.3, 1.75, 0.15));
 let needRender = true;
 const requestRender = () => needRender = true;
@@ -291,6 +298,7 @@ function pick(ev) {
   const r = canvas.getBoundingClientRect();
   ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
   camera.updateMatrixWorld(); ray.setFromCamera(ndc, camera);
+  if (document.body.classList.contains('animating')) refreshBounds();
   const cand = meshes.filter(m => m.visible && sysState[m.userData.sys].visible && m.material !== GHOST);
   const hit = ray.intersectObjects(cand, false)[0];
   lastHit = hit || null;
@@ -719,6 +727,15 @@ window.__dbg = { PREF, requestRender, composer, gtao, meshes, THREE, camera, con
   bindInfoEvents($('#infoBody'));
   initExtras({ SYSTEMS, SYS, INDEX, DEFS, MUSCLES, meshes, sysState, zhOf, loadSystem, setSysVisible, commit, isolate, fadeOthers, setSelection, frame,
     showInfoForMesh, selectEntry, closeSideMobile, PREF, controls, renderer, renderNow, toast });
+  initAnim({ meshes, meshByName, scene, loadSystem, requestRender, setPhase,
+    replaceMesh: (o, n) => { const i = meshes.indexOf(o); if (i >= 0) meshes[i] = n; meshByName.set(n.userData.name, n);
+      if (selected.has(o)) { selected.delete(o); selected.add(n); } if (secondary.has(o)) { secondary.delete(o); secondary.add(n); } if (primary === o) primary = n; },
+    highlight: async (P, S, v) => { await highlightBases(P, S); const sel = [...selected, ...secondary];
+      const box = new THREE.Box3(); sel.forEach(m => box.expandByObject(m)); const c = box.getCenter(new THREE.Vector3());
+      const d = 0.85, dir = v === 'arm-back' ? new THREE.Vector3(-1, 0.15, -0.35) : new THREE.Vector3(-1, 0.12, 0.3);
+      label.classList.add('hidden');
+      tween(c, c.clone().add(dir.normalize().multiplyScalar(d))); } });
+  window.__anim = { play: playAnim, stop: stopAnim, has: hasAnim };
   setLayerLevel(0); updateHistoryButtons();
   resize(); view('front');
   await Promise.all(SYSTEMS.filter(s => s.on).map(s => loadSystem(s.key)));

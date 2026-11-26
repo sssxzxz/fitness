@@ -202,3 +202,15 @@ kbd{background:#0f1216;border:1px solid var(--line);border-radius:4px;padding:1p
   #nav{bottom:auto;top:56px;right:8px;flex-direction:column}
   #toolbar{top:10px;right:8px;left:auto;transform:none;bottom:auto}
 }
+
+/* 动作动画播放条 */
+#animBar{position:absolute;left:50%;bottom:64px;transform:translateX(-50%);background:rgba(255,255,255,.97);color:#1d2733;border-radius:12px;box-shadow:0 2px 14px rgba(0,0,0,.25);padding:8px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;z-index:6;width:min(560px,92%)}
+#animBar.hidden{display:none}
+#animBar b{font-size:14px}
+#animBar button{background:#f1f4f7;color:#1d2733;border-color:#d5dbe2;font-size:13px;padding:4px 10px}
+#animBar button.primary{background:#2a6fdb;color:#fff;border-color:#2a6fdb}
+#apProg{flex:1;min-width:120px;accent-color:#2a6fdb}
+#apPhase{flex-basis:100%;font-size:13px;padding-left:2px}
+#apPhase[data-k=con]{color:#d92b1c}#apPhase[data-k=iso]{color:#9a1fc0}#apPhase[data-k=ecc]{color:#169a47}
+#apPhase::before{content:'';display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;background:currentColor}
+@media (max-width:820px){#animBar{bottom:12px}}

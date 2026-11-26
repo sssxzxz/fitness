@@ -65,7 +65,7 @@ function exDetailHTML(e) {
   const nm = b => `<button type="button" class="mchip" data-base="${esc(b)}">${esc(ctx.zhOf(b) || b)}</button>`;
   return `<h2>${esc(e.zh)}</h2><div class="en en-txt">${esc(e.en)}</div>
     <div class="crumb">${esc(e.cat)} · ${esc(e.equip)} · ${esc(e.level)}</div>
-    <div class="acts"><button type="button" class="primary" data-addex="${e.id}">＋ 加入今天的训练</button>
+    <div class="acts">${window.__anim?.has(e.id) ? `<button type="button" class="primary" data-anim="${e.id}">▶ 动作动画</button>` : ''}<button type="button" class="${window.__anim?.has(e.id) ? '' : 'primary'}" data-addex="${e.id}">＋ 加入今天的训练</button>
       <button type="button" data-edit="ex|${e.id}" data-title="${esc(e.zh)}">✎ 视频 / 图片 / 笔记</button></div>
     ${ctx.customHTML('ex|' + e.id)}
     <h3>目标肌肉</h3>
@@ -135,6 +135,7 @@ export function initFitness(c) {
   // 信息面板里的动作 / 肌肉按钮
   $('#infoBody').addEventListener('click', e => {
     const a = e.target.closest('[data-addex]'); if (a) return addToSession(a.dataset.addex);
+    const an = e.target.closest('[data-anim]'); if (an) { ctx.closeSideMobile(); return window.__anim.play(an.dataset.anim); }
     const x = e.target.closest('.exchip,[data-ex].link'); if (x) return showExercise(x.dataset.ex);
     const m = e.target.closest('.mchip'); if (m) return ctx.selectBase(m.dataset.base);
   });
