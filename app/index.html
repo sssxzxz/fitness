@@ -16,16 +16,18 @@
     <header class="brand"><b>身体观察</b><span>3D 解剖 · 肌肉确认 · 不适记录</span></header>
     <nav class="tabs" id="tabs">
       <button data-tab="layers" class="on">图层</button>
-      <button data-tab="focus">重点肌肉</button>
+      <button data-tab="focus">肌肉</button>
       <button data-tab="search">搜索</button>
+      <button data-tab="train">训练</button>
       <button data-tab="logs">记录</button>
     </nav>
     <section class="pane on" id="pane-layers">
       <div id="layerList"></div>
       <div class="group">
+        <label class="chk"><input type="checkbox" id="optEn" checked> 显示英文名 / 拉丁名</label>
         <label class="chk"><input type="checkbox" id="optFascia"> 显示筋膜（包在肌肉外的膜）</label>
         <label class="chk"><input type="checkbox" id="optSides" checked> 显示左右两侧</label>
-        <label class="chk"><input type="checkbox" id="optHeat"> 按近 30 天不适程度着色</label>
+        <label class="chk">肌肉着色 <select id="optColor"><option value="">原色</option><option value="pain">近 30 天不适程度</option><option value="volume">近 7 天训练量</option></select></label>
         <label class="chk"><input type="checkbox" id="optLabels" checked> 鼠标悬停显示名称</label>
       </div>
       <div class="help"><b>操作方法</b>
@@ -40,6 +42,19 @@
     <section class="pane" id="pane-search">
       <input id="q" type="search" placeholder="输入中文或英文，如：斜方肌 / trapezius / rib" autocomplete="off">
       <div id="results"></div>
+    </section>
+    <section class="pane" id="pane-train">
+      <h4 class="sec">动作库</h4>
+      <input id="exQ" type="search" placeholder="搜索动作或肌肉，如：臀 / 划船" autocomplete="off">
+      <div id="exCats" class="cats"></div>
+      <label class="chk"><input type="checkbox" id="exOnlySel"> 只看能练到当前选中肌肉的动作</label>
+      <div id="exList"></div>
+      <h4 class="sec">今天的训练</h4>
+      <div id="sessBox"></div>
+      <h4 class="sec">近 7 天训练量（组数）</h4>
+      <div id="volBox"></div>
+      <h4 class="sec">训练历史</h4>
+      <div id="histList"></div>
     </section>
     <section class="pane" id="pane-logs">
       <div class="row"><button id="newLog" class="primary">＋ 新建记录</button><select id="logFilter"><option value="">全部肌肉</option></select></div>
@@ -83,6 +98,8 @@
     <label><span>疼痛 / 不适程度：<b id="painVal">3</b> / 10</span><input type="range" name="pain" min="0" max="10" value="3"></label>
     <fieldset><legend>感觉</legend><div id="fFeel" class="chips"></div></fieldset>
     <fieldset><legend>哪个动作能诱发？</legend><div id="fTests" class="chips"></div></fieldset>
+    <fieldset><legend>做了哪些处理</legend><div id="fTreat" class="chips"></div></fieldset>
+    <label>处理后的效果<select name="effect"><option value="">（还不确定）</option><option value="better2">明显好转</option><option value="better">有些好转</option><option value="same">没变化</option><option value="worse">加重</option></select></label>
     <label>诱因<input name="trigger" placeholder="如：久坐、训练后、睡姿、搬重物"></label>
     <label>备注<textarea name="note" rows="3" placeholder="位置细节、持续时间、处理方式、效果…"></textarea></label>
     <input type="hidden" name="id">
@@ -114,7 +131,10 @@
 
 <script src="data/muscles.js"></script>
 <script src="data/zh-terms.js"></script>
+<script src="data/zh-names.js"></script>
 <script src="data/tests-detail.js"></script>
+<script src="data/exercises.js"></script>
+<script src="data/care.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

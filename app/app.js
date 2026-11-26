@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { initTestsUI, loadCustom, entryTestsHTML, bindInfoEvents, resultsText } from './tests-ui.js';
+import { initTestsUI, loadCustom, entryTestsHTML, bindInfoEvents, resultsText, customHTML } from './tests-ui.js';
+import { initFitness, loadWorkouts, careHTML, exercisesForBase, volumeByBase, renderTraining } from './fitness.js';
 
 
 const $ = s => document.querySelector(s);
-const MUSCLES = window.MUSCLES, ZH = window.ZH_TERMS;
+const MUSCLES = window.MUSCLES, ZH = { ...window.ZH_TERMS, ...(window.ZH_NAMES || {}) };
 const SYSTEMS = [
   { key: 'skeletal', zh: '骨骼', en: 'Skeletal', color: 0xe8dcc4, on: true },
   { key: 'muscular', zh: '肌肉与筋膜', en: 'Muscular', color: 0xb34a40, on: true },
@@ -61,11 +62,14 @@ new ResizeObserver(resize).observe(canvas.parentElement);
 (function loop() { requestAnimationFrame(loop); if (controls.update() || needRender) { renderer.render(scene, camera); needRender = false; } })();
 
 // ───────── naming helpers ─────────
+const showEn = () => !document.body.classList.contains('no-en');
+function applyEnPref(on) { document.body.classList.toggle('no-en', !on); try { localStorage.setItem('showEn', on ? '1' : '0'); } catch {} }
+try { applyEnPref(localStorage.getItem('showEn') !== '0'); } catch {}
 const SIDE = { l: '左侧', r: '右侧', '': '' };
 function zhOf(base) {
   if (!base) return '';
   const clean = base.replace(/^\(|\)$/g, '');
-  return ZH[clean] || ZH[clean.replace(/ muscles?$/, '')] || (byBase[base] && byBase[base].zh) || '';
+  return ZH[base] || ZH[clean] || ZH[clean.replace(/ muscles?$/, '')] || (byBase[base] && byBase[base].zh) || '';
 }
 function hash(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return h; }
 function baseColor(sys, name) {
@@ -121,28 +125,34 @@ let pending = 0;
 function setLoading(t) { if (t && t.startsWith('正在加载')) pending++; else if (!t) { pending = Math.max(0, pending - 1); if (pending) return; } const el = $('#loading'); el.textContent = t; el.style.display = t ? 'block' : 'none'; }
 
 // ───────── visual state ─────────
-let heatMap = null;
+let heatMap = null, volMap = null, secondary = new Set();
+const SEC = new THREE.Color(0xff8a00);
 function applyStyles() {
+  const vmax = volMap ? Math.max(1, ...Object.values(volMap)) : 1;
   for (const m of meshes) {
     const st = sysState[m.userData.sys];
     const mat = m.material;
-    const isSel = selected.has(m);
+    const isSel = selected.has(m), isSec = secondary.has(m);
     let op = st.opacity;
-    if (ghost && selected.size && !isSel) op = Math.min(op, 0.16);
+    if (ghost && selected.size && !isSel && !isSec) op = Math.min(op, 0.16);
     mat.transparent = op < 0.999; mat.opacity = op; mat.depthWrite = op > 0.5;
     if (heatMap && m.userData.sys === 'muscular') {
       const hk = heatMap[byBase[m.userData.base]?.id] ?? heatMap[m.userData.base];
       const h = hk == null ? null : (m.userData.side === 'l' ? hk.l : m.userData.side === 'r' ? hk.r : Math.max(hk.l ?? -1, hk.r ?? -1, -1) < 0 ? null : Math.max(hk.l ?? 0, hk.r ?? 0));
       if (h != null) mat.color.setHSL(0.11 - 0.11 * (h / 10), 0.95, 0.5);
       else mat.color.setRGB(0.42, 0.40, 0.40);
+    } else if (volMap && m.userData.sys === 'muscular') {
+      const v = volMap[m.userData.base];
+      if (v) mat.color.setHSL(0.6 - 0.45 * Math.min(1, v / vmax), 0.85, 0.5);   // 少：蓝 → 多：黄绿
+      else mat.color.setRGB(0.42, 0.40, 0.40);
     } else mat.color.copy(m.userData.color);
-    mat.emissive.copy(isSel ? HL : new THREE.Color(0)); mat.emissiveIntensity = isSel ? (m === primary ? 0.75 : 0.5) : 0;
-    m.renderOrder = isSel ? 2 : 0;
+    mat.emissive.copy(isSel ? HL : isSec ? SEC : new THREE.Color(0)); mat.emissiveIntensity = isSel ? (m === primary ? 0.75 : 0.5) : isSec ? 0.45 : 0;
+    m.renderOrder = isSel || isSec ? 2 : 0;
   }
   requestRender();
 }
-function setSelection(list, prim) {
-  selected = new Set(list); primary = prim || list[0] || null; applyStyles();
+function setSelection(list, prim, sec = []) {
+  selected = new Set(list); secondary = new Set(sec); primary = prim || list[0] || null; applyStyles();
 }
 function frame(list, pad = 1.6, autoDir = false) {
   const box = new THREE.Box3();
@@ -216,7 +226,7 @@ canvas.addEventListener('pointermove', e => {
   const m = pick(e), tip = $('#tip');
   if (!m) { tip.style.display = 'none'; return; }
   const u = m.userData, zh = zhOf(u.base);
-  tip.textContent = (zh ? zh + ' · ' : '') + u.base + (u.side ? `（${SIDE[u.side]}）` : '');
+  tip.textContent = (showEn() || !zh ? (zh ? zh + ' · ' : '') + u.base : zh) + (u.side ? `（${SIDE[u.side]}）` : '');
   const r = canvas.getBoundingClientRect();
   tip.style.left = (e.clientX - r.left + 14) + 'px'; tip.style.top = (e.clientY - r.top + 10) + 'px'; tip.style.display = 'block';
 });
@@ -255,6 +265,7 @@ function openInfo(html) { $('#infoBody').innerHTML = html; $('#info').classList.
 function entryHTML(e) {
   return `
    <h3>确认动作</h3>${entryTestsHTML(e)}
+   ${careHTML(e)}
    <h3>与易混结构的区分</h3><ul>${e.diff.map(d => `<li>${esc(d)}</li>`).join('')}</ul>
    <h3>常见不适表现</h3><p style="font-size:13px;line-height:1.6;margin:4px 0">${esc(e.refer)}</p>
    <h3>解剖</h3><dl><dt>起点</dt><dd>${esc(e.origin)}</dd><dt>止点</dt><dd>${esc(e.insertion)}</dd><dt>神经支配</dt><dd>${esc(e.nerve)}</dd><dt>主要作用</dt><dd><ul>${e.actions.map(a => `<li>${esc(a)}</li>`).join('')}</ul></dd></dl>
@@ -271,15 +282,33 @@ function defHTML(base) {
   const d = DEFS[base]; if (!d || !d.def) return '';
   return `<details><summary style="cursor:pointer;color:var(--mut);font-size:13px;margin-top:14px">英文释义（Z-Anatomy / Wikipedia）</summary><div class="def">${esc(d.def)}</div><div class="lic">文本与模型来自 Z-Anatomy（CC BY-SA 4.0），源自 BodyParts3D 与 Wikipedia。</div></details>`;
 }
-let curWhole = false;
+let curWhole = false, curInfo = null;
+function refreshInfo() {
+  const st = $('#info').scrollTop;
+  if (curInfo?.ex) import('./fitness.js').then(f => { f.showExercise(curInfo.ex); $('#info').scrollTop = st; });
+  else if (primary) { showInfoForMesh(primary, curWhole); $('#info').scrollTop = st; }
+}
+async function highlightBases(prim, sec) {
+  await loadSystem('muscular'); setSysVisible('muscular', true);
+  const P = meshes.filter(m => m.userData.sys === 'muscular' && prim.includes(m.userData.base));
+  const S = meshes.filter(m => m.userData.sys === 'muscular' && sec.includes(m.userData.base));
+  [...P, ...S].forEach(m => m.visible = true);
+  ghost = true; $('#btnGhost').classList.add('on');
+  setSelection(P, P[0], S); frame([...P, ...S], 1.5, true);
+}
+async function selectBase(base) {
+  await loadSystem('muscular'); setSysVisible('muscular', true);
+  const m = meshes.find(x => x.userData.sys === 'muscular' && x.userData.base === base);
+  if (m) { m.visible = true; selectMesh(m); frame([...selected], 2.2, true); }
+}
 function showInfoForMesh(m, whole = false) {
-  curWhole = whole;
+  curWhole = whole; curInfo = null;
   const u = m.userData, e = byBase[u.base], zh = zhOf(u.base);
   const crumb = [SYS[u.sys].zh, ...u.groups.slice(1).map(g => zhOf(g) || g)].join(' › ');
   const la = DEFS[u.base]?.la;
   openInfo(`
     <h2>${esc(e ? e.zh : (zh || u.base))}${u.side && !whole ? ` <small style="font-size:14px;color:var(--mut)">${SIDE[u.side]}</small>` : ''}</h2>
-    <div class="en">${esc(u.base)}${la ? ' · <i>' + esc(la) + '</i>' : ''}</div>
+    <div class="en en-txt">${esc(u.base)}${la ? ' · <i>' + esc(la) + '</i>' : ''}</div>
     ${e && e.bases.length > 1 ? `<div class="en">所选部分：${esc(zh && zh !== e.zh ? zh : u.base)}</div>` : ''}
     <div class="crumb">${esc(crumb)}</div>
     <div class="acts">
@@ -287,7 +316,8 @@ function showInfoForMesh(m, whole = false) {
       <button data-a="hideGroup">隐藏同组</button>${e ? '<button data-a="all">高亮整块肌肉</button>' : ''}
       <button data-a="log" class="primary">记录不适</button>
     </div>
-    ${e ? entryHTML(e) : '<p class="hint">该结构暂无确认动作数据（第一版覆盖头颈与躯干的重点肌肉）。</p>'}
+    ${e ? entryHTML(e) : (u.sys === 'muscular' ? '<p class="hint">该结构暂无确认动作数据（第一版覆盖头颈与躯干的重点肌肉）。</p>' : '')}
+    ${u.sys === 'muscular' ? exercisesForBase(u.base) : ''}
     ${defHTML(u.base)}`);
   const acts = $('#infoBody .acts');
   acts.onclick = ev => {
@@ -321,20 +351,22 @@ function buildLayers() {
   $('#layerList').innerHTML = SYSTEMS.map(s => `
     <div class="layer"><input type="checkbox" data-k="${s.key}" ${s.on ? 'checked' : ''}>
       <span class="sw" style="background:#${s.color.toString(16).padStart(6, '0')}"></span>
-      <span>${s.zh}<small>${s.en}</small></span>
+      <span>${s.zh}<small class="en-txt">${s.en}</small></span>
       <input type="range" min="0.05" max="1" step="0.05" value="1" data-op="${s.key}" title="不透明度"></div>`).join('');
   $('#layerList').onchange = e => { if (e.target.dataset.k) setSysVisible(e.target.dataset.k, e.target.checked); };
   $('#layerList').oninput = e => { const k = e.target.dataset.op; if (k) { sysState[k].opacity = +e.target.value; applyStyles(); } };
+  $('#optEn').checked = showEn();
+  $('#optEn').onchange = e => applyEnPref(e.target.checked);
   $('#optFascia').onchange = e => { meshes.forEach(m => { if (m.userData.fascia) m.visible = e.target.checked; }); requestRender(); };
   $('#optSides').onchange = e => showBothSides = e.target.checked;
-  $('#optHeat').onchange = e => { heatMap = e.target.checked ? computeHeat() : null; applyStyles(); };
+  $('#optColor').onchange = e => { const v = e.target.value; heatMap = v === 'pain' ? computeHeat() : null; volMap = v === 'volume' ? volumeByBase(7) : null; applyStyles(); };
 }
 
 // ───────── focus pane ─────────
 function buildFocus() {
   const regions = [...new Set(MUSCLES.map(m => m.region))];
   $('#focusList').innerHTML = regions.map(r => `<div class="region"><h4>${r}</h4>${MUSCLES.filter(m => m.region === r).map(m =>
-    `<button class="item" data-id="${m.id}"><span class="dot" style="background:${REGION_COLOR[r]}"></span>${esc(m.zh)}<small>${esc(m.en)}</small></button>`).join('')}</div>`).join('');
+    `<button class="item" data-id="${m.id}"><span class="dot" style="background:${REGION_COLOR[r]}"></span>${esc(m.zh)}<small class="en-txt">${esc(m.en)}</small></button>`).join('')}</div>`).join('');
   $('#focusList').onclick = e => { const b = e.target.closest('.item'); if (b) { selectEntry(MUSCLES.find(m => m.id === b.dataset.id)); closeSideMobile(); } };
   $('#redFlags').innerHTML = window.RED_FLAGS.map(t => `<li>${esc(t)}</li>`).join('');
 }
@@ -353,7 +385,7 @@ function buildSearch() {
     const q = $('#q').value.trim().toLowerCase();
     if (!q) { $('#results').innerHTML = ''; return; }
     const res = SEARCH.filter(s => s.text.includes(q)).sort((a, b) => (b.entry ? 1 : 0) - (a.entry ? 1 : 0)).slice(0, 80);
-    $('#results').innerHTML = res.map((s, i) => `<button class="item" data-i="${i}">${s.entry ? '★ ' : ''}${esc(s.zh || s.b)}<small>${s.zh ? esc(s.b) + ' · ' : ''}${SYS[s.k].zh}</small></button>`).join('') || '<p class="hint">没有找到</p>';
+    $('#results').innerHTML = res.map((s, i) => `<button class="item" data-i="${i}">${s.entry ? '★ ' : ''}${esc(s.zh || s.b)}<small>${s.zh ? `<span class="en-txt">${esc(s.b)} · </span>` : ''}${SYS[s.k].zh}</small></button>`).join('') || '<p class="hint">没有找到</p>';
     $('#results').onclick = async e => {
       const b = e.target.closest('.item'); if (!b) return; const s = res[+b.dataset.i];
       closeSideMobile();
@@ -367,6 +399,8 @@ function buildSearch() {
 }
 
 // ───────── logs ─────────
+const TREATS = ['休息', '冷敷', '热敷', '放松按压', '拉伸', '强化训练', '调整姿势', '药物', '理疗/推拿', '就医'];
+const EFFECTS = { better2: '明显好转', better: '有些好转', same: '没变化', worse: '加重' };
 const FEELS = ['酸痛', '胀', '紧绷', '刺痛', '牵拉痛', '烧灼', '麻木', '无力', '僵硬', '抽筋'];
 let LOGS = [], serverMode = false;
 async function loadLogs() {
@@ -396,6 +430,7 @@ function renderLogs() {
   $('#logList').innerHTML = list.map(l => `<div class="logitem" data-id="${esc(l.id)}" style="border-left-color:hsl(${110 - l.pain * 11},80%,50%)">
      <b>${esc(labelOf(l.muscle))}</b>（${SIDEZH[l.side] || ''}） 程度 ${l.pain}/10
      <div class="meta">${esc(l.time.replace('T', ' '))} · ${esc((l.feel || []).join('、'))}${l.tests?.length ? ' · 诱发：' + esc(l.tests.join('、')) : ''}</div>
+     ${l.treat?.length || l.effect ? `<div class="meta">处理：${esc((l.treat || []).join('、') || '—')}${l.effect ? ' → ' + EFFECTS[l.effect] : ''}</div>` : ''}
      ${l.results ? `<div class="meta">逐项测试：${esc(resultsText(l.results) || '均正常')}</div>` : ''}
      ${l.note ? `<div>${esc(l.note)}</div>` : ''}</div>`).join('') || '<p class="hint">还没有记录。点击模型中的肌肉，再点「记录不适」。</p>';
   $('#logList').onclick = e => { const d = e.target.closest('.logitem'); if (d) openLog(LOGS.find(l => l.id === d.dataset.id)); };
@@ -428,6 +463,8 @@ function openLog(log = {}) {
   f.side.value = log.side || 'right'; f.time.value = log.time || nowLocal();
   f.pain.value = log.pain ?? 3; $('#painVal').textContent = f.pain.value;
   f.trigger.value = log.trigger || ''; f.note.value = log.note || ''; f.id.value = log.id || '';
+  $('#fTreat').innerHTML = TREATS.map(x => `<label><input type="checkbox" value="${x}" ${(log.treat || []).includes(x) ? 'checked' : ''}>${x}</label>`).join('');
+  f.effect.value = log.effect || '';
   $('#fFeel').innerHTML = FEELS.map(x => `<label><input type="checkbox" value="${x}" ${(log.feel || []).includes(x) ? 'checked' : ''}>${x}</label>`).join('');
   const fillTests = () => {
     const e = MUSCLES.find(m => m.id === f.muscle.value);
@@ -447,6 +484,7 @@ function openLog(log = {}) {
       feel: [...$('#fFeel').querySelectorAll('input:checked')].map(i => i.value),
       tests: [...$('#fTests').querySelectorAll('input:checked')].map(i => i.value),
       trigger: f.trigger.value.trim(), note: f.note.value.trim(),
+      treat: [...$('#fTreat').querySelectorAll('input:checked')].map(i => i.value), effect: f.effect.value,
       ...(log.results ? { results: log.results, summary: log.summary, kind: log.kind } : {})
     });
   };
@@ -465,8 +503,14 @@ $('#importJson').onchange = async e => {
 };
 
 // ───────── tabs / mobile ─────────
+function gotoTab(t) {
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + t));
+  if (t === 'train') renderTraining();
+}
 $('#tabs').onclick = e => {
   const t = e.target.dataset.tab; if (!t) return;
+  if (t === 'train') renderTraining();
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + t));
   if (t === 'search') $('#q').focus();
@@ -480,7 +524,14 @@ window.__dbg = { meshes, THREE, camera, controls, pick: (x, y) => pick({ clientX
   [INDEX, DEFS] = await Promise.all([fetch('data/index.json').then(r => r.json()), fetch('data/definitions.json').then(r => r.json())]);
   for (const s of SYSTEMS) { const g = new THREE.Group(); g.visible = !!s.on; scene.add(g); sysState[s.key] = { group: g, loaded: false, visible: !!s.on, opacity: 1 }; }
   buildLayers(); buildFocus(); buildSearch(); await loadLogs(); await loadCustom(serverMode); renderLogs();
-  initTestsUI({ isServer: () => serverMode, saveLog, MUSCLES, onChange: () => { if (primary) { const st = $('#info').scrollTop; showInfoForMesh(primary, curWhole); $('#info').scrollTop = st; } } });
+  initTestsUI({ isServer: () => serverMode, saveLog, MUSCLES, onChange: refreshInfo });
+  await loadWorkouts(serverMode);
+  initFitness({
+    isServer: () => serverMode, zhOf, customHTML, closeSideMobile,
+    openInfo: (html, ex) => { openInfo(html); curInfo = { ex }; },
+    highlight: highlightBases, selectBase, selectedBase: () => primary?.userData.base || null,
+    gotoTab, onVolumeChange: () => { if (volMap) { volMap = volumeByBase(7); applyStyles(); } },
+  });
   bindInfoEvents($('#infoBody'));
   resize(); view('front');
   await Promise.all(SYSTEMS.filter(s => s.on).map(s => loadSystem(s.key)));

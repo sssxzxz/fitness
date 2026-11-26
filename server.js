@@ -5,7 +5,8 @@ const PORT = +process.env.PORT || 8686;
 const ROOT = path.join(__dirname, 'app');
 const DATA_DIR = path.join(__dirname, 'userdata');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
-const LOGS = path.join(DATA_DIR, 'logs.json'), CUSTOM = path.join(DATA_DIR, 'custom.json');
+const CUSTOM = path.join(DATA_DIR, 'custom.json');
+const COLL = { logs: path.join(DATA_DIR, 'logs.json'), workouts: path.join(DATA_DIR, 'workouts.json') };
 const MAX_UPLOAD = 2 * 1024 ** 3;
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 const load = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
@@ -34,11 +35,13 @@ function sendFile(req, res, file, cache) {
 http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x'), p = decodeURIComponent(u.pathname);
   try {
-    if (p === '/api/logs') {
-      if (req.method === 'GET') return json(res, load(LOGS, []));
-      if (req.method === 'POST') { const log = JSON.parse(await readBody(req)); if (!log.id) throw 0; save(LOGS, load(LOGS, []).filter(x => x.id !== log.id).concat([log])); return json(res, {}); }
+    const seg = p.split('/');
+    if (seg[1] === 'api' && COLL[seg[2]]) {
+      const F = COLL[seg[2]];
+      if (seg.length === 3 && req.method === 'GET') return json(res, load(F, []));
+      if (seg.length === 3 && req.method === 'POST') { const it = JSON.parse(await readBody(req)); if (!it.id) throw new Error('no id'); save(F, load(F, []).filter(x => x.id !== it.id).concat([it])); return json(res, {}); }
+      if (seg.length === 4 && req.method === 'DELETE') { save(F, load(F, []).filter(x => x.id !== seg[3])); return json(res, {}); }
     }
-    if (p.startsWith('/api/logs/') && req.method === 'DELETE') { const id = p.slice(10); save(LOGS, load(LOGS, []).filter(x => x.id !== id)); return json(res, {}); }
     if (p === '/api/custom') {
       if (req.method === 'GET') return json(res, load(CUSTOM, {}));
       if (req.method === 'POST') { const { key, value } = JSON.parse(await readBody(req)); const c = load(CUSTOM, {}); if (value == null) delete c[key]; else c[key] = value; save(CUSTOM, c); return json(res, {}); }

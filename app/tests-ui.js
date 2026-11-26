@@ -40,7 +40,7 @@ function mediaItemHTML(it) {
   if (p.type === 'bilibili') return `<figure class="media"><div class="frame"><iframe src="https://player.bilibili.com/player.html?bvid=${p.id}&autoplay=0&high_quality=1${s ? '&t=' + s : ''}" allowfullscreen loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"></iframe></div>${cap}<a class="ext" href="https://www.bilibili.com/video/${p.id}${s ? '?t=' + s : ''}" target="_blank" rel="noopener">在 B 站打开</a></figure>`;
   return `<figure class="media"><a href="${esc(it.src)}" target="_blank" rel="noopener">🔗 ${esc(it.title || it.src)}</a></figure>`;
 }
-function customHTML(key) {
+export function customHTML(key) {
   const c = CUSTOM[key]; if (!c) return '';
   return (c.media || []).map(mediaItemHTML).join('') + (c.note ? `<div class="mynote"><b>我的补充：</b>${esc(c.note)}</div>` : '');
 }
@@ -88,7 +88,7 @@ function renderMList() {
   $('#mList').innerHTML = editing.media.length ? editing.media.map((it, i) => `<div class="mrow"><span>${parseMedia(it.src).type === 'link' ? '🔗' : /video|youtube|bilibili/.test(parseMedia(it.src).type) ? '🎬' : '🖼'} ${esc(it.title || it.src)}${it.start || it.end ? ` <small>(${it.start || 0}s–${it.end || '结束'})</small>` : ''}</span>
     <span><button type="button" data-up="${i}" title="上移">↑</button><button type="button" data-del="${i}" class="danger" title="删除">✕</button></span></div>`).join('') : '<p class="hint">还没有添加视频或图片。</p>';
 }
-function openMediaEditor(key, title) {
+export function openMediaEditor(key, title) {
   const cur = CUSTOM[key] || {};
   editing = { key, media: (cur.media || []).map(x => ({ ...x })), removed: [] };
   $('#mTitle').textContent = title;

@@ -11,6 +11,7 @@ ROOT = os.path.join(BASE, "app")
 DATA_DIR = os.path.join(BASE, "userdata")
 MEDIA_DIR = os.path.join(DATA_DIR, "media")
 LOGS = os.path.join(DATA_DIR, "logs.json")
+COLL = {"logs": LOGS, "workouts": os.path.join(DATA_DIR, "workouts.json")}
 CUSTOM = os.path.join(DATA_DIR, "custom.json")
 MAX_UPLOAD = 2 * 1024 ** 3  # 2GB
 os.makedirs(MEDIA_DIR, exist_ok=True)
@@ -77,8 +78,8 @@ class H(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         p = unquote(urlparse(self.path).path)
-        if p == "/api/logs":
-            with lock: return self._json(load(LOGS, []))
+        if p.startswith("/api/") and p[5:] in COLL:
+            with lock: return self._json(load(COLL[p[5:]], []))
         if p == "/api/custom":
             with lock: return self._json(load(CUSTOM, {}))
         if p.startswith("/media/"): return self._media(p[len("/media/"):])
@@ -87,10 +88,10 @@ class H(SimpleHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path); p = unquote(u.path)
         try:
-            if p == "/api/logs":
-                log = self._body_json(); assert log.get("id")
+            if p.startswith("/api/") and p[5:] in COLL:
+                f = COLL[p[5:]]; log = self._body_json(); assert log.get("id")
                 with lock:
-                    l = [x for x in load(LOGS, []) if x.get("id") != log["id"]] + [log]; save(LOGS, l)
+                    l = [x for x in load(f, []) if x.get("id") != log["id"]] + [log]; save(f, l)
                 return self._json({})
             if p == "/api/custom":
                 body = self._body_json(); key = body["key"]; val = body.get("value")
@@ -124,9 +125,10 @@ class H(SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         p = unquote(urlparse(self.path).path)
-        if p.startswith("/api/logs/"):
-            lid = p[len("/api/logs/"):]
-            with lock: save(LOGS, [x for x in load(LOGS, []) if x.get("id") != lid])
+        parts = p.split("/")
+        if len(parts) == 4 and parts[1] == "api" and parts[2] in COLL:
+            f, lid = COLL[parts[2]], parts[3]
+            with lock: save(f, [x for x in load(f, []) if x.get("id") != lid])
             return self._json({})
         if p.startswith("/api/media/"):
             fp = os.path.join(MEDIA_DIR, os.path.basename(p[len("/api/media/"):]))

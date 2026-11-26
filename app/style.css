@@ -106,3 +106,22 @@ dialog.guide[open]{display:flex}
 .gtab td,.gtab th{border-bottom:1px solid var(--line);padding:5px;text-align:left}
 .gtab tr.pain td,.gtab tr.both td{color:#ffb74d}.gtab tr.weak td{color:#ef9a9a}
 .media video{max-height:42vh}
+body.no-en .en-txt{display:none!important}
+
+.sec{margin:14px 0 6px;color:var(--mut);font-size:12px;letter-spacing:1px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.cats{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}.cats button{font-size:12px;padding:3px 8px}
+#exQ{width:100%}
+.exrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:5px 0}
+.exchip,.mchip{font-size:12px;padding:3px 9px;border-radius:14px}
+.exchip{background:#20352a;border-color:#2e5a40}.mchip{background:var(--bg)}
+.txtchip{font-size:12px;color:var(--txt);background:var(--bg);border:1px dashed var(--line);border-radius:14px;padding:3px 9px}
+.care-gen{font-size:13px;margin:6px 0}.care-gen summary{cursor:pointer;color:var(--acc)}.care-gen ul{margin:4px 0 8px}
+.steps{font-size:13px;line-height:1.7;padding-left:20px}
+.sess-ex{background:var(--panel2);border-radius:8px;padding:8px;margin:6px 0}
+.sess-ex .link{cursor:pointer;color:var(--acc)}
+.setrow{display:flex;align-items:center;gap:5px;font-size:12px;margin:4px 0}
+.setrow input{width:58px;padding:3px 5px}
+.setrow button,.sess-ex>button{font-size:12px;padding:2px 8px}
+.volrow{display:grid;grid-template-columns:1fr 90px 34px;gap:6px;align-items:center;font-size:12px;margin:3px 0}
+.volrow .bar{height:8px;background:var(--bg);border-radius:4px;overflow:hidden}.volrow .bar i{display:block;height:100%;background:linear-gradient(90deg,#4fb3ff,#c6e05a)}
+.volrow b{text-align:right;font-weight:500}
