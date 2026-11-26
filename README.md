@@ -4,8 +4,8 @@
 
 ## 启动
 
-1. 安装 Node.js（18 或以上）：https://nodejs.org/
-2. 双击启动脚本：
+1. 需要 Python 3.7+（Anaconda 自带即可）或 Node.js 18+，有其一就行：[Python](https://www.python.org/) / [Node.js](https://nodejs.org/)
+2. 双击启动脚本（Windows 脚本会自动找 Node → Anaconda 的 Python → 系统 Python）：
    - Windows：`start-windows.bat`
    - macOS：`start-mac.command`（第一次运行如果被系统拦截，右键 → 打开）
    - Linux：`./start-linux.sh`
